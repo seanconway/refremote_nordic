@@ -1,0 +1,17 @@
+menu "Dongle bridge options"
+
+config DONGLE_FAKE_LINK
+	bool "Report synthetic BLE link status"
+	default y
+	help
+	  Reports both remotes as CONNECTED with plausible RSSI and battery
+	  values, so the scoreboard's signal and battery indicators can be
+	  exercised before any BLE code exists.
+
+	  This changes nothing on the wire — the LINK lines are exactly the
+	  ones real remotes would produce. Turn it off to report the truth
+	  (both DISCONNECTED) once BLE is implemented.
+
+endmenu
+
+source "Kconfig.zephyr"

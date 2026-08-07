@@ -291,10 +291,22 @@ Both parsers must handle these without crashing, and must correctly parse the ne
 | T6 | `BOGUS FOO BAR\n` | Ignored, no crash |
 | T7 | `EVT ADD_POINT\n` (missing args) | Ignored, logged |
 | T8 | `EVT ADD_POINT RED xyz\n` (bad seq) | Ignored, logged |
-| T9 | 200 bytes with no `\n`, then a valid line | Overlong buffer discarded, next line parsed |
+| T9 | 200 bytes with no `\n`, then `\n`, then a valid line | Overlong buffer discarded; the line after the terminator parses |
+| T9c | An overlong run split across several reads, then `\n`, then a valid line | Identical to T9 — the discard state survives the chunk boundary |
 | T10 | `\n\n\nEVT ADD_POINT RED 17\n` | Empty lines ignored, event parsed |
 
 T3, T4, and T5 are the ones that matter. Write them first.
+
+**Resynchronisation happens at the next `\n`, which may be several reads away.
+A chunk boundary is not a resync point** — the split between reads is an
+artifact of the transport and carries no information about the stream. It
+follows that a discarded run and a line that shares its terminator are lost
+together: after overlong garbage with no intervening `\n`, the next line to
+arrive is consumed as the tail of that garbage, and the line after it is the
+first to parse. Losing one line is the correct price of resynchronising on a
+known-good boundary. The alternative — treating a read boundary as a resync
+point — lets the tail of a garbage run be emitted as a message, and a tail
+that happens to begin at a keyword boundary would parse as a genuine event.
 
 ---
 

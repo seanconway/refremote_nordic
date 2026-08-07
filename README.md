@@ -8,3 +8,7 @@ Firmware for a wireless officiating remote system: nRF52840-based wrist remotes 
 ## Getting Started
 
 More setup instructions will be added here as the project takes shape.
+
+This project's current goal is to establish a reliable interface between the browser based scoreboard app and the MDBT50Q-CX-40 (Nordic nRF52840 USB-C Dongle) as detailed in PROTOCOL.md. The web app has already been updated accoridng to the interface spec and its repo can be found in the wrsl-app dir, 
+
+Create a detailed step by step plan to implement and validate the interface. review the protocol spec, scoreboard app repo, and nordic mcp resourse for up to date documentation and best practices
