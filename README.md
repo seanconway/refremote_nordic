@@ -55,7 +55,8 @@ Everything follows from that:
 SCOPE.md                 project scope — authoritative
 SYSTEM_FUNC_SPEC.md      functional specification — authoritative
 PROTOCOL.md              dongle ↔ scoreboard wire protocol v3.0
-PLAN.md                  status, decisions, roadmap, and the validation ladder
+PLAN.md                  living status document — completed work, planned work,
+                         binding decisions, the validation ladder, version history
 dongle/                  USB bridge firmware
   README.md              build, flash, manual test
   src/
@@ -74,7 +75,7 @@ remote/                  wrist remote firmware — not started
 
 The USB half of the dongle is built and working on real hardware against protocol **v2.0**. Protocol **v3.0** is a breaking revision written against the functional specification, and the firmware has not yet been brought up to it. The radio layer is not started, and the remotes do not exist.
 
-[`PLAN.md`](PLAN.md) carries the current state in detail, the decisions that still bind future work, the milestone sequence, and the validation ladder with its results log. **Read it before writing code**, particularly §6, which lists the ways the radio layer can regress the USB link without touching any USB code.
+[`PLAN.md`](PLAN.md) carries the current state in detail, the record of completed work, the planned work in order, the decisions that still bind, and the validation ladder with its results log. **Read it before writing code**, particularly §3.4, which lists the ways the radio layer can regress the USB link without touching any USB code.
 
 ## Build and flash
 

@@ -1,8 +1,8 @@
 # RefRemote — Plan, Status and Validation
 
-**Status as of 2026-08-09.** The USB link is built and working end to end on real hardware, against protocol **v2.0**. `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are new and are now the authority on direction; `PROTOCOL.md` **v3.0** is the revision that answers to them, and it is a breaking change. Neither the application nor the firmware has been brought up to it yet. The radio layer is not started and the remotes do not exist.
+**Status as of 2026-08-09.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** is the revision that answers to them, and it is a breaking change against the v2.0 prototype. The scoreboard application is at v3.0 (M1, complete); the dongle firmware is still at v2.0 (M2, next); the radio layer is not started and the remotes do not exist.
 
-This document carries where the project stands, the decisions that still bind future work, the milestone sequence, and the full validation ladder. **The validation plan previously lived in `dongle/VALIDATION.md` and has been rolled in here** (§7–§12), because a status document that points at a separate test plan gets read as a status document.
+**This is a living document.** It carries the current state of the project (§1), the record of completed work and what it settled (§2), the planned work in order (§3), the decisions that still bind (§4), the full validation ladder (§5–§6), the unmeasured risks (§7), known gaps (§8), and the results log and version history (§9). The validation plan previously lived in `dongle/VALIDATION.md` and has been rolled in here (§5–§6), because a status document that points at a separate test plan gets read as a status document.
 
 | For | See |
 |---|---|
@@ -13,88 +13,250 @@ This document carries where the project stands, the decisions that still bind fu
 
 ---
 
-## 1. Where things stand
+## 1. Current status
+
+| # | Milestone | State |
+|---|---|---|
+| **M0** | USB link at v2.0, working on hardware | ✅ done — §2.1 |
+| **M1** | Scoreboard application to v3.0, the functional specification, and the design system | ✅ done — §2.3 |
+| **M2** | **Dongle USB firmware to v3.0** | ▶ next — §3.1 |
+| **M3** | Radio layer and remote firmware | §3.3 |
+| **M4** | Validation ladder and deployment validation | §5–§6 |
+| **M5** | MVP hardening — USB identity, instrumentation, ruleset library | §8 |
 
 | Component | State |
 |---|---|
 | `SCOPE.md`, `SYSTEM_FUNC_SPEC.md` | Current. Authoritative. |
-| `PROTOCOL.md` v3.0 | Written against the specification. **Not yet implemented on either side.** Byte-identical in both repos. |
-| Scoreboard app | Working against v2.0. 57 tests passing. Being rebuilt for v3.0 — milestone M1. |
-| Dongle USB firmware | Working against v2.0: framing, parser, clock, heartbeat, supervision, CONFIRM, TEST modes. 52 KB flash, 19 KB RAM. Milestone M2 brings it to v3.0. |
+| `PROTOCOL.md` v3.0 | Written against the specification. Implemented on the app side only. Byte-identical in both repos. |
+| Scoreboard app | **v3.0, M1 complete.** 113 tests passing across protocol, reducer and service suites. Lint and production build clean. |
+| Dongle USB firmware | **Still v2.0**: framing, parser, clock, heartbeat, supervision, `CONFIRM`, TEST modes. 52 KB flash, 19 KB RAM. Milestone M2 brings it to v3.0. |
 | Dongle radio | **Not started.** `CONFIG_DONGLE_FAKE_LINK` fabricates link state; LEDs stand in for haptics. |
 | Remote firmware | **Not started.** Hardware not built. |
 | Host parser tests | Written, **never executed** — no C compiler on the dev machine. |
-| Validation | V1–V3 passed against v2.0 and are **void** for v3.0. V0 and V4–V8 never run. |
+| Validation | V1–V3 passed against v2.0 and are **void** for v3.0. V0 and V4–V8 never run, and all hardware rungs are blocked on M2. |
 
-**Working on real hardware, in both directions, at v2.0:** the handshake, the PING cadence, clock state and the 1 Hz heartbeat, link supervision with `ERR APP_TIMEOUT`, end-to-end confirmation, and all TEST modes driving the scoreboard.
+**The two ends are deliberately out of step right now.** The app speaks v3.0 and refuses a v2.0 `HELLO` at the major-version guard, so plugging in today's dongle produces "dongle firmware is incompatible" — the correct behaviour, and the V7 guard working, but not a usable link. Nothing in the app is blocked by this: `FakeDongleTransport` exercises the full protocol surface without hardware.
+
+---
+
+## 2. Completed work
+
+### 2.1 M0 — the USB link at v2.0, proven on hardware
+
+**Proved on real hardware, in both directions, at v2.0:** the handshake, the PING cadence, clock state and the 1 Hz heartbeat, link supervision with `ERR APP_TIMEOUT`, end-to-end confirmation, and all TEST modes driving the scoreboard. V1–V3 passed on 2026-08-07 (§9.2) — they are void at v3.0, because the message set they exercised no longer exists, but they are cheap to re-run and must be, after M2.
 
 That is a real result and it is what made the v3.0 revision cheap: the transport, the framing, the supervision model and the build and flash path are all proven, and the revision touches the message set above them.
 
----
+### 2.2 The v3.0 protocol revision
 
-## 2. What v3.0 changes, and why it had to
+`PROTOCOL.md` §15 lists the changes. Three of them were not refinements — the v2.0 design contradicted the specification and could not be extended into compliance. Recorded here because each one is a class of mistake, not just an instance:
 
-`PROTOCOL.md` §15 lists the changes. Three of them are not refinements — the v2.0 design contradicts the specification and could not be extended into compliance.
+1. **The wire carried officiating meaning.** v2.0's `EVT TIME_UP` / `PERIOD_UP` named operations, not buttons. FS §7.3 requires that no message carry ruleset meaning; FS §7.4 requires that adding a ruleset be a scoreboard change only. Worse, those tokens hard-coded a *default* assignment that `SCOPE.md` §9.2 has already marked for post-MVP remapping — under v2.0, letting a referee remap `FORWARD` would have meant a firmware release. v3.0 transports `<button> <gesture> <src>` and assigns meaning in the scoreboard. This was the single most consequential finding of the specification pass: the prototype protocol looked correct because it worked, and was structurally unable to reach the product.
 
-### 2.1 The wire carried officiating meaning
+2. **The heartbeat was generated on the dongle.** v2.0 put the 1 Hz heartbeat on the dongle, driven by `CLOCK RUN` / `CLOCK STOP`, to save a per-second packet. FS §6.2 rejects that architecture by name: a remote or dongle beating on stale ownership state reports one thing on the referee's wrist while the scoreboard reports another, quietly and with no self-correcting mechanism. It was also wrong for the product in a way invisible at the prototype — it beat on both remotes whenever the clock ran, where the real heartbeat beats on **the owning athlete's remote only**, which is ownership the dongle cannot know because it is match state. Per-beat commanding costs one message per second and buys no stale-state divergence, continuous end-to-end liveness proof during exactly the periods the referee depends on the system most, and a remote that stays fully stateless.
 
-v2.0's `EVT TIME_UP` / `PERIOD_UP` named operations, not buttons. FS §7.3 requires that no message carry ruleset meaning and that a new ruleset need no communication-layer change; FS §7.4 requires that adding a ruleset be a scoreboard change only.
+3. **The acknowledgement budget was four times too loose.** v2.0 gave confirmation a 500 ms window because confirmation was a convenience. FS §5.3 makes it a **functional requirement of the scoring interface**: multi-point actions are entered as repeated presses, and viability rests on the referee feeling each press land. The budget is ~120 ms inclusive of retries, decomposed in `PROTOCOL.md` §11. A late tap is worse than no tap, and that asymmetry now drives the design: exceeding the budget must degrade to silence.
 
-Worse, those tokens hard-coded a *default* assignment that `SCOPE.md` §9.2 has already marked for post-MVP remapping — under v2.0, letting a referee remap `FORWARD` would have meant a firmware release. v3.0 transports `<button> <gesture> <src>` and assigns meaning in the scoreboard.
+### 2.3 M1 — the scoreboard application at v3.0
 
-This was the single most consequential finding of the specification pass. The prototype protocol looked correct because it worked; it was structurally unable to reach the product.
-
-### 2.2 The heartbeat was generated on the dongle
-
-v2.0 principle R2 put the 1 Hz heartbeat on the dongle, driven by `CLOCK RUN` / `CLOCK STOP`, specifically to remove a per-second packet. FS §6.2 rejects that architecture by name:
-
-> Architectures that hold ownership state on the remote or dongle to improve beat regularity solve a problem the product does not have, while introducing one it cannot tolerate: a remote beating on stale state reports one thing on the referee's wrist while the scoreboard reports another, quietly and with no self-correcting mechanism.
-
-The v2.0 heartbeat was also *wrong for the product* in a way that was invisible at the prototype: it beat on both remotes whenever the clock ran. The real heartbeat beats on **the owning athlete's remote only**, while the secondary clock accrues — which is a different signal carrying different information, and the dongle cannot know it because ownership is match state.
-
-Per-beat commanding costs one message per second and buys three things: no stale-state divergence, continuous end-to-end liveness proof during exactly the periods the referee depends on the system most, and a remote that stays fully stateless.
-
-### 2.3 The acknowledgement budget was four times too loose
-
-v2.0 gave confirmation a 500 ms window because confirmation was a convenience. FS §5.3 makes it a **functional requirement of the scoring interface**: multi-point actions are entered as repeated presses, and viability rests on the referee feeling each press land. The budget is ~120 ms inclusive of retries, decomposed in `PROTOCOL.md` §11.
-
-A late tap is worse than no tap, and that asymmetry now drives the design: exceeding the budget must degrade to silence.
-
----
-
-## 3. Milestones
-
-| # | Milestone | State |
-|---|---|---|
-| **M0** | USB link at v2.0, working on hardware | ✅ done |
-| **M1** | **Scoreboard application to v3.0, the functional specification, and the design system** | ▶ in progress |
-| **M2** | Dongle USB firmware to v3.0 | next |
-| **M3** | Radio layer and remote firmware | §5 |
-| **M4** | Validation ladder and deployment validation | §7–§12 |
-| **M5** | MVP hardening — USB identity, instrumentation, ruleset library | §13 |
-
-M1 before M2 deliberately. The application is the node that holds every requirement the specification added — ruleset configuration, secondary clocks, counters, flags, action grouping, persistence, the watchdog, the tiered display — and it can be built and fully tested against `FakeDongleTransport` with no hardware at all. Bringing the firmware up first would mean guessing at the shape of the traffic the application actually produces.
-
-### 3.1 M1 — scoreboard application
-
-| Item | Requirement |
+| Item | Delivered as |
 |---|---|
-| `protocol.js` to v3.0 | Every message in `PROTOCOL.md` §3, all cases in §14 |
-| `DongleService` to v3.0 | Handshake with `CFG` + `STATE`, 1 s `PING`, 2.5 s supervision, `ACK` with dedupe, `JOIN` → `STATE`, `HAP`, latency and gap instrumentation |
-| Ruleset configuration | The `FS §12.2` schema as data, with the library: NFHS, NCAA, UWW freestyle/Greco, IBJJF, ADCC |
-| Match model | Score with floor, periods and phases, counters with ladder position, tri-state flag, secondary clock both polarities, action grouping, action log |
-| Clock of record | Monotonic, wall-clock-immune, discontinuity detection with referee confirmation |
-| Persistence | Survives reload and browser restart; restore prompt on load |
-| Watchdog | Drops the serial link on a match-state stall (FS §8.3) |
-| Display | Tiered per FS §8.4, built on the design system, `.rr-mat` surface |
-| Pre-match confirmation | Ruleset, period structure, F1/F2 legend, colour assignment, set serial, link and battery (FS §12.3) |
-| Tests | Protocol suite and service suite, both hardware-free |
+| `protocol.js` to v3.0 | `src/protocol/protocol.js`. Every message in `PROTOCOL.md` §3, all cases in §14, chunk-boundary reassembly, `seq` over the 65536 modulus |
+| `DongleService` to v3.0 | `src/dongle/DongleService.js`. Handshake with `CFG` + `STATE`, 1 s `PING`, 2.5 s supervision, `ACK` with dedupe, `JOIN` → forced `STATE`, `HAP`, running counters |
+| Ruleset configuration | `src/match/rulesets.js`. The FS §12.2 schema as pure data: NFHS, NCAA, UWW freestyle and Greco, IBJJF, SJJIF, ADCC, generic no-gi |
+| Match model | `src/match/matchReducer.js`. Score with floor, periods and phases, counters with ladder position, tri-state flag, secondary clock in both polarities, freestyle action grouping, action log |
+| Clock of record | `src/match/clock.js`. Monotonic subtraction; wall clock read only as a corroborating witness; divergence halts the match and asks |
+| Persistence | `src/match/persistence.js`, state version 3. Survives reload and browser restart; restore prompt on load |
+| Watchdog | `src/match/useWatchdog.js`. Drops the serial link deliberately on a match-state stall (FS §8.3) |
+| Display | `Scoreboard.jsx` primary tier, `DetailPanel.jsx` secondary tier, on the vendored design system and the `.rr-mat` surface |
+| Pre-match confirmation | `PreMatch.jsx` — ruleset, period structure, F1/F2 legend, colour assignment, set serial, link and battery (FS §12.3) |
+| Soak instrumentation | Running counters (`evtReceived`, `seqGaps`, `duplicates`, `beatsSent`, `beatsSuppressed`, ack latency p99 and max, connection uptime) plus a JSON diagnostics export. **This closes the gap that made V8 unfalsifiable** |
+| Tests | 113 across `protocol.test.js`, `matchReducer.test.js`, `DongleService.test.js`. All hardware-free |
 
-### 3.2 M2 — dongle USB firmware
+**Also settled during M1, and binding on M2:**
+
+- **The operator controls are not a second path into match state.** Every control dispatches the identical `INPUT` action a real press produces — same button, same gesture, same reducer path, same firmware gesture timing (600 ms hold, 150 ms repeat). A second path into scoring state is a second thing that can be wrong, and it would diverge silently.
+- **An inert button and a no-op press are different.** An inert button (a ruleset that leaves F1 unassigned) produces no action, no haptic, no indicator and no trace — `ACK … SILENT`. A press that legitimately changes nothing, such as `REMOVE_POINT` at the score floor, still earns a full-amplitude tap, because the referee needs to know the press registered. This distinction is in the reducer and the firmware must not flatten it.
+- **The design system is vendored, not fetched.** Its `Icon.jsx` pulled Lucide from a CDN at first render; it was replaced with a local inline-SVG glyph map, because SCOPE.md §7.3 requires a complete match with the venue's network absent.
+
+Two defects were found by driving the application in a real browser that neither the test suite nor the build could have caught — §2.4. Browser verification is not optional for this class of work.
+
+### 2.4 What browser verification caught that testing did not
+
+Recorded because it generalises. Both defects passed the unit suite, the linter and the production build.
+
+1. **A frozen readout beside a live one.** The detail panel showed accrued secondary-clock time stuck at `00:00` while the primary tier counted up — it rendered the accumulator's stored base instead of its value at `now`. The reducer was correct; the reading of it was not. **Anything derived from a running clock has to be evaluated at a `now`, and the only way to see that it wasn't is to watch it for several seconds.**
+2. **The browser repainting the brand palette.** Chrome's auto-dark-mode flattened every surface to `rgb(24,26,27)` and every colour to one off-white on a stock profile. That takes the athlete red and green with it — and those are fixed by the ruleset and are how the corners are identified, so a browser adjusting them is a correctness failure, not a cosmetic one. Fixed by declaring `<meta name="color-scheme" content="dark">` and `:root { color-scheme: dark; }`. **This extends D2**: the browser matrix must be checked on a stock profile, because the developer's browser is not a representative one.
+
+### 2.5 Constraints discovered in implementation, now written into the spec
+
+Real, discovered during implementation, each of which would present as a silent mystery rather than an error. All four are now recorded in `PROTOCOL.md` — the spec should describe what shipped.
+
+1. **`LINK <remote> CONNECTED` without an RSSI value is rejected.** Firmware must always emit it when connected. Symptom if violated: the signal indicator silently never updates. Now mandatory in `PROTOCOL.md` §7.
+2. **Resynchronisation happens at the next `\n`, never at a chunk boundary.** A read boundary carries no information about the stream. The app had a bug here (fixed 2026-08-07); `PROTOCOL.md` §2.2 carries the clarifying paragraph and T9c pins it.
+3. **Nothing but the protocol may write to the CDC-ACM port** (§4.4). If either guard is relaxed, log output interleaves with protocol traffic, corrupting lines intermittently and silently.
+4. **The acknowledgement must fire on the originating remote only**, routed by the `src` recorded against that `seq`. A broadcast tap is indistinguishable from a correct one in single-remote bench testing and wrong in every real match.
+
+---
+
+## 3. Planned work
+
+M1 was done before M2 deliberately: the application is the node that holds every requirement the specification added, and it could be built and fully tested against `FakeDongleTransport` with no hardware at all. Bringing the firmware up first would have meant guessing at the shape of the traffic the application actually produces. That guessing is now over — M1 fixed the exact traffic, and M2 is concrete.
+
+### 3.1 M2 — dongle USB firmware to v3.0 — ▶ next
 
 Straightforward against a finished application: the message set changes, the clock and heartbeat timer are deleted, `ACK` routing replaces `CONFIRM` routing at a 120 ms window, `STATE` and `CFG` are relayed to the radio seam, `JOIN` is emitted from it, and `TEST 4` is added. The framing, transport, supervision skeleton and build path are unchanged.
 
+| # | Change | Note |
+|---|---|---|
+| 1 | `HELLO` reports `3.0` | Until this lands, the app's major-version guard refuses the link — correct, and it means M2 is all-or-nothing rather than incremental |
+| 2 | `EVT <button> <gesture> <src> <seq>` | Four fields. Delete `TIME_UP`/`PERIOD_UP`/`CLOCK`/`EXPIRE`; add the three gestures |
+| 3 | **Delete the clock and the heartbeat timer** | This is a deletion, not a port. The dongle holds no match state at v3.0 — the beat arrives as `HAP <target> BEAT` from the app |
+| 4 | `ACK <seq> [SILENT]` replaces `CONFIRM` | Routed to the originating remote by the `src` recorded against that `seq`, never broadcast (§10.4) |
+| 5 | `STATE` and `CFG` accepted and relayed | Idempotent full assertion; at M2 they land on the LED stand-in |
+| 6 | `JOIN <remote>` emitted from the radio seam | Does not exist yet; the app answers it with a forced `STATE` |
+| 7 | `seq` widened to 0–65535 | 16-bit wrap. Hold-repeat at 150 ms wraps a 1000-entry space in 2.5 minutes |
+| 8 | `PING` 1 s / supervision 2.5 s | Tightened from 2 s / 5 s |
+| 9 | `TEST 4` added | 21 events per remote, every gesture on every button |
+
 The pending table shrinks in lifetime and grows in importance. The transmit ring needs a drop counter before M3, not after.
+
+**Do V0 first.** The host parser tests are the cheapest possible check on a message-set rewrite, they need no hardware, and they cover the two cases that must fail closed (T7, the v2.0-shaped gestureless `EVT`; T16, the duplicate `seq`). Rewriting the parser without running them means trusting a rewritten parser on inspection alone — which is how the current one is trusted, and that was already the highest-value outstanding item before M2 added to it.
+
+### 3.2 Validating the app ↔ dongle interface without remotes — ▶ alongside M2
+
+The remotes do not exist and will not for some time, so the question of how far the USB interface can be validated without them had to be answered deliberately rather than by default. **The answer is the dongle emulator, built 2026-08-09** — the application is validated against an executable copy of the protocol before firmware exists, so a failure after M2 localises to the firmware rather than being ambiguous across the whole pipeline.
+
+An emulator on the *radio* side was considered and rejected: a laptop's own Bluetooth stack cannot hold the peripheral role with the connection parameters this design needs (SCI, LLPM — §3.3), so its timing would describe the laptop rather than the product. Radio validation needs Nordic silicon at both ends and belongs to M3, where the nRF52840 DK is already the remote-prototyping platform and most of that firmware is the remote firmware.
+
+The pieces:
+
+**What already exists to build on:**
+
+- **V0**, the host parser tests — no hardware at all, and the highest-value single item (§5, rung V0).
+- **The dongle `TEST` modes** (`PROTOCOL.md` §10.2) — deterministic `EVT` stimulus standing in for remote presses: `TEST 1` for one press per button, `TEST 4` for every gesture on every button, `TEST 2` for randomised soak load. These are what let V3 and V8 run with no remotes.
+- **`CONFIG_DONGLE_FAKE_LINK`** — synthetic `LINK`/RSSI/battery so the app's indicators can be exercised. A stand-in, and a standing trap when left on (§5.2).
+- **The LED stand-in** (`indicator.c`) — two LEDs representing two remotes' worth of haptics and indicators, which is enough to see *that* a command arrived and nothing about *where* it was routed or *how it feels*.
+- **The app's running counters and diagnostics export** — ack latency p99/max is measured at the app end, so R2 can be bounded (minus radio hops) as soon as M2 lands, with no extra tooling.
+- **The dongle emulator — ✅ built, and the instrument that closes this question.** See below.
+
+#### The dongle emulator
+
+`wrsl-app/src/emulator/` implements the dongle half of `PROTOCOL.md` v3.0 in JavaScript and drives it over a real serial link, with an interactive mockup of **both remotes**: seven pressable buttons per remote carrying the firmware's gesture timing, four indicators rendering `STATE`, and a haptic motor showing waveform and amplitude. The scoreboard connects through its ordinary Web Serial path and cannot distinguish it from firmware.
+
+**Why this and not a dongle-side echo.** The alternative considered was having the firmware report what it *would have* radioed, as `LOG` lines read in the app's debug panel. The emulator is strictly better: it needs no firmware at all, so it works now rather than after M2; it observes each direction at its rich end instead of narrating the poor one; and it makes the two things a single dongle LED can never show directly visible — **which** wrist an acknowledgement landed on, and **how strong** it was against the others.
+
+**What it validates:** the whole application against an executable copy of the protocol — handshake, supervision and recovery, `JOIN` → forced `STATE`, indicator assertion per remote, acknowledgement routing by `src`, the inert/no-op distinction, the beat-on-owner-only rule and burst suppression, and the real Web Serial path including reconnect. In effect the V2–V7 behavioural surface, before any firmware exists.
+
+**What it does not validate, and must not be read as validating:** anything about firmware. Its timing is desktop-grade, not firmware-grade — an ack measured here does not bound R2. It says nothing about how an ERM feels on a wrist (R3, R4), the radio (B4–B8), or real link state.
+
+**Its role at M2 is as the reference trace.** Run a scenario against the emulator, run the same scenario against the firmware, diff the wire logs. A difference is a firmware defect, localised to one segment — which is the failure-isolation the pre-firmware validation exists to buy.
+
+**Running it.** `npm run dev` in `wrsl-app`, then the emulator at `/emulator.html` and the scoreboard at `/?anyport`, each holding one end of a virtual serial pair. Use **Free Virtual Serial Ports**, not com0com — com0com's driver has been unmaintained since 2017 and its signature is no longer trusted, so on current Windows it installs but fails with Code 52 and produces no ports at all. Because the two halves talk over the serial pair rather than over HTTP they need not share an origin, so a **deployed** scoreboard can be pointed at a local emulator, which is the honest way to run rungs D1 and D7 against the artefact that actually shipped.
+
+**Standing obligation:** the model is now a third place the wire contract lives, alongside `PROTOCOL.md` and `DongleService`. `dongleModel.test.js` asserts the §14 cases from the dongle's side, so the two ends are checked against one specification — but a protocol change that skips the model would validate the application against a contract the firmware will not honour.
+
+**What no software instrument covers:** acknowledgement routing to a physical *wrist* (B6), haptic amplitude and perceptibility (R3, R4), radio latency and the full 120 ms budget (B7, R2's radio share), and link behaviour at range (B4, B5). These wait for M3 hardware, and any bench result that appears to speak to them is validating a stand-in.
+
+**Still to decide while M2 is in progress:**
+
+1. **Where V0 runs, permanently.** A one-off run on a borrowed machine proves the parser once; the parser is about to be rewritten and will be touched again at M3. Decide whether V0 becomes a CI job (the tests are plain C with a makefile — any Linux runner works) or a documented WSL/MSYS2 step on the dev machine, so it cannot silently return to "never executed".
+2. **What the M2 pass bar is.** Proposed: V0 green, V1–V8 pass at v3.0 with the results logged in §9.2, each rung's wire log diffed against the emulator's for the same scenario, and R1 and the app share of R2 measured. That closes every rung that does not require a radio, and leaves §3.4 as the reentry checklist when one exists.
+
+### 3.3 M3 — the radio layer
+
+Not designed here. What follows is the starting position, the evidence behind it, and the questions that have to be answered first.
+
+#### What the radio has to deliver
+
+From `PROTOCOL.md` §12 and the specification:
+
+| Requirement | Source |
+|---|---|
+| ~25 ms one-way, inclusive of retransmission, at 12 m with body shadowing | Half the acknowledgement budget |
+| Exactly-once and ordered per remote, or visible loss | FS §7.3 |
+| Downlink at 1 Hz per remote sustained, plus asynchronous acknowledgements and notifications | FS §6.2, §11 |
+| 30 systems / 90 devices in one venue, no degradation attributable to neighbours | `SCOPE.md` §4 |
+| **No cross-set association under any circumstance**, cryptographically enforced | FS §2.3 |
+| Ten-hour day on the remotes | FS §11.2 |
+| RSSI per remote, debounced link state | `PROTOCOL.md` §7 |
+
+#### Bluetooth LE against Enhanced ShockBurst
+
+Both ends are Nordic silicon, so a proprietary link is genuinely available and worth taking seriously rather than dismissing.
+
+**Enhanced ShockBurst** is attractive on three of the requirements. It is a star topology with one Primary Receiver and up to eight Primary Transmitters, which is our shape exactly. It does packet acknowledgement and automatic retransmission in hardware, with a configurable retransmit count and delay. And critically, **the PRX discards repeated packets**, so a retransmitted press is not delivered twice — link-layer exactly-once, which is the guarantee `PROTOCOL.md` §5.3 is built on. Latency is excellent: there is no connection interval to wait for, so a press goes out when it happens.
+
+It fails on three others, and the third is decisive.
+
+- **No channel hopping.** ESB does not do adaptive frequency hopping. A fixed channel in a hall with venue Wi-Fi, hundreds of spectator phones and 29 other systems is exactly the environment `SCOPE.md` §4 says the product must survive. Frequency agility would have to be built — which is what Gazell is, and adopting Gazell brings its own constraints.
+- **No security of any kind.** ESB traffic is plaintext with no authentication. FS §2.3 requires pairing to be cryptographically enforced rather than proximity-based, because cross-system association is a scoring-integrity failure. That layer would be ours to write and get right, over a link where getting it wrong corrupts two matches at once and need not be obvious to either referee. The nRF52840 has CryptoCell-310 and hardware AES-CCM, so it is feasible — but it is our code holding scoring integrity.
+- **The downlink is backwards for this product.** In ESB, PRX→PTX data rides only as a payload attached to an acknowledgement, and acknowledgement payloads must be **preloaded** — a transmitter cannot send a command and get a direct response to it. Our downlink is not a response channel: it is a 1 Hz heartbeat, plus per-press acknowledgement taps, plus expiry buzzes and indicator assertions, all originated by the scoreboard asynchronously. Delivering that over ESB means the remotes poll continuously, which spends the battery budget on the uplink to service a downlink, and adds a polling interval to every acknowledgement.
+
+**Bluetooth LE** answers all three. Connection events are bidirectional by construction, so the downlink costs nothing extra. Adaptive frequency hopping across 37 data channels is the mechanism the density requirement needs, and Wi-Fi-overlapping channels can be marked bad in the channel map. LE Secure Connections with bonding gives cryptographically enforced pairing directly, with no protocol of our own between us and scoring integrity.
+
+The question BLE has to answer is latency. Standard minimum connection interval is 7.5 ms, and Nordic's own multi-link HID guidance uses **10 ms rather than 7.5 ms whenever more than one connection is active**, because 7.5 ms with multiple links produces link-layer scheduling conflicts that show up as dropped report rates and disconnections. Two remotes means two connections, so 10 ms is the naive figure — and a 10 ms interval with retransmission slots is uncomfortably close to the 25 ms allocation before body shadowing is considered.
+
+Two mechanisms close that gap, both available on nRF52 in the pinned SDK:
+
+- **Shorter Connection Intervals (SCI)**, from Bluetooth 6.2 and present in NCS since v3.2.0, extends the interval range down to 1.25 ms in the mandatory range and 375 µs in the extended range, and mandates connection subrating. It is supported across the Nordic portfolio including the nRF52 series. Because both ends of this link are ours, the usual objection — that consumer hosts will not support it for years — does not apply.
+- **Low Latency Packet Mode (LLPM)**, Nordic proprietary, gives a 1 ms interval on LE 2M PHY. Note that Nordic's own desktop application drops to 10 ms when LLPM is combined with more than one connection, for the same scheduling reason.
+
+**Starting position:** Bluetooth LE, dongle as central holding two peripheral connections, LE 2M PHY, SCI negotiated to the shortest interval both ends support with 10 ms as the fallback, LE Secure Connections with bonding for the fixed set pairing. ESB is retained as the documented fallback if measured latency at density fails — and if it is adopted, the channel-hopping and security layers are scoped as first-class work, not as details.
+
+**Do not treat this as settled.** It is a reasoned starting point from documentation, and the numbers that matter — latency at 12 m through a torso, with 29 other systems in the hall — cannot be obtained from documentation.
+
+#### Where the dongle sits is part of the link budget
+
+The Raytac MDBT50Q-CX-40 carries an MDBT50Q-P1M module with a PCB trace antenna, and the nRF52840 will do up to +8 dBm. The dongle then sits in a USB port on a laptop at the scoreboard table: close to the host's own 2.4 GHz radios, often below table height, frequently with bodies between it and the mat.
+
+The link budget must be taken **at the dongle as deployed**, not on a bench with clear line of sight. If it does not close, the available remedies are a USB extension cable to raise and separate the dongle, higher transmit power, or a dongle placement constraint in the deployment documentation — in that order of preference.
+
+#### Seams that exist in the code today
+
+Each is currently satisfied by a stand-in, and each is where M3 attaches:
+
+| Seam | Location | Currently |
+|---|---|---|
+| Link state source | `engine.c` — `links[]`, populated under `#ifdef CONFIG_DONGLE_FAKE_LINK` | Synthetic `CONNECTED` with fixed RSSI and battery |
+| Event origination | `engine.c` — `send_evt()` | Called only from `test_handler()` |
+| Acknowledgement delivery | `engine.c` — pending table | Pulses an LED, not routed by `src` |
+| Indicator assertion | *does not exist* | New at M2 |
+| Haptic delivery | `engine.c`, `indicator.c` | LED pulses |
+| Remote join detection | *does not exist* | New at M3; drives `JOIN` |
+
+`send_evt()` already allocates and wraps the sequence number and registers confirmable actions in the pending table, so a press arriving from a remote needs to reach *that function* rather than reimplement around it.
+
+#### Questions M3 has to answer
+
+- Does radio work share the system workqueue (§4.6), or does the engine need its own? What jitter does the 1 Hz heartbeat tolerate, and what does the 120 ms acknowledgement budget tolerate?
+- How is a physical remote bound to the `RED` / `GREEN` identity, and how is the officiating-set serial provisioned so `HELLO` can report it?
+- What is the measured one-way latency at 12 m through body shadowing, at density — and what is its p99, not its median?
+- How is `LINK` state derived and debounced so a remote at the edge of range does not flood the USB link with transitions?
+- Where do presses go that arrive while the app is disconnected — dropped, or queued? *(Dropped. A queued press applied minutes later is a wrong score with no visible cause. But it must be counted and surfaced.)*
+- What is the power cost of a 1 Hz downlink beat to one remote plus the connection cadence the acknowledgement budget requires, against the ten-hour target?
+- How do diagnostics get out during radio bring-up, given the console is disabled and a second CDC instance is forbidden (§4.4)? RTT is the obvious answer and needs the debugger partition table (`fstab-debugger.dtsi`), which means giving up the stock bootloader on the bring-up unit. **Decide before starting, not during.**
+
+### 3.4 How the radio can regress the USB link
+
+**Read this before writing radio code, not after.** The USB interface is validated in an environment with no radio. Adding one can degrade it without touching a line of USB code.
+
+| # | Risk | Test |
+|---|---|---|
+| B1 | **Workqueue contention.** Every engine timer and the RX drain run on the system workqueue (§4.6). Radio work on the same queue delays them. Shows up as acknowledgement latency, not as an error. | Re-run V4 and V5 with the radio active and both remotes connected. Measure the `EVT`→`ACK`→tap path, p99. Consider a dedicated workqueue. |
+| B2 | **Transmit ring saturation.** The TX ring is 1024 bytes and drops whole lines when full. Two remotes at 1 Hz heartbeat, plus 10 s `LINK` re-emission, plus event traffic, raises the line rate well above bench conditions. | Run V8 with both remotes connected and pressing. **Instrument the drop path with a counter first** — an uninstrumented drop is a silent loss. |
+| B3 | **`CONFIG_DONGLE_FAKE_LINK` still enabled.** Leaves the dongle reporting synthetic `CONNECTED` while real remotes are disconnected. | Set it to `n`. Confirm `INFO` reports `DISCONNECTED` with no remotes powered. |
+| B4 | **`LINK` state churn.** Real connections flap at the edge of range. Each transition is a line, and the app renders link loss as a primary-tier alarm. | Power-cycle a remote repeatedly at the edge of range. Confirm no flood and no strobing indicator. |
+| B5 | **Real RSSI and battery values.** Bench values are constants. Real ones can fall outside the ranges the app accepts, and an out-of-range value is dropped silently. | Verify at various distances and charge levels. |
+| B6 | **Acknowledgement routing.** Every acknowledgement currently pulses the same LED. It must reach the **originating remote only**, routed by the `src` recorded against that `seq`. | Press RED and GREEN in quick succession; confirm each tap lands on the correct wrist. |
+| B7 | **The 120 ms budget now includes two radio hops.** This is the risk most likely to bite in a real match. | Re-measure after the radio lands. Distribution, not median. |
+| B8 | **Heartbeat contention with acknowledgement.** New at v3.0. The beat and the tap share one motor, and a four-press burst takes about a second, so they *will* collide (FS §11.1). | Confirm burst suppression in the app, and confirm amplitude separation on real hardware with a real strap. |
+
+### 3.5 M4 and M5
+
+**M4 — validation.** Work the ladder (§5) in order at v3.0, then deployment validation (§6), then the unmeasured risks (§7). The definition of done is §9.1. After the radio lands, §3.4 is re-run in full.
+
+**M5 — MVP hardening.** The known gaps of §8 that are not closed by M2–M4: the real USB VID/PID and `requestPort()` filters, connection-error language, the Web Worker heartbeat if R1's test demands it, self-hosted fonts, and ruleset verification against the published rulebooks for the current cycle.
 
 ---
 
@@ -124,8 +286,6 @@ Console, shell and logging are off in `prj.conf`, and a `BUILD_ASSERT` in `usb_l
 
 *This is the trap the upstream `cdc_acm` sample falls into on this board, and it cost real time during bring-up.*
 
-**Practical consequence for M3:** the console is disabled and a second CDC instance is forbidden, so how diagnostics get out during radio bring-up is a decision to make **before** starting, not during. RTT is the obvious answer and needs the debugger partition table (`fstab-debugger.dtsi`), which means giving up the stock bootloader on the bring-up unit.
-
 ### 4.5 Never gate transmission on DTR
 
 The app opens the port via Web Serial and never calls `setSignals()`, so DTR assertion is the browser's default rather than anything the protocol guarantees. Gating on it yields a dongle that enumerates but never answers `INFO`. Boot-time `HELLO` is best-effort; the handshake is driven by the app sending `INFO`.
@@ -138,111 +298,19 @@ All engine timers and the RX drain run on the system workqueue, giving exactly o
 
 ### 4.7 `PROTOCOL.md` is duplicated, not linked
 
-The two copies were previously kept in step by a filesystem hard link. That does not survive an editor writing a new file rather than modifying in place — it silently broke during this revision, leaving the two repos on different versions with no indication. Copy explicitly and **verify the hashes match** after any change.
+The two copies were previously kept in step by a filesystem hard link. That does not survive an editor writing a new file rather than modifying in place — it silently broke during the v3.0 revision, leaving the two repos on different versions with no indication. Copy explicitly and **verify the hashes match** after any change.
 
 ---
 
-## 5. M3 — the radio layer
+## 5. Validation ladder
 
-Not designed here. What follows is the starting position, the evidence behind it, and the questions that have to be answered first.
-
-### 5.1 What the radio has to deliver
-
-From `PROTOCOL.md` §12 and the specification:
-
-| Requirement | Source |
-|---|---|
-| ~25 ms one-way, inclusive of retransmission, at 12 m with body shadowing | Half the acknowledgement budget |
-| Exactly-once and ordered per remote, or visible loss | FS §7.3 |
-| Downlink at 1 Hz per remote sustained, plus asynchronous acknowledgements and notifications | FS §6.2, §11 |
-| 30 systems / 90 devices in one venue, no degradation attributable to neighbours | `SCOPE.md` §4 |
-| **No cross-set association under any circumstance**, cryptographically enforced | FS §2.3 |
-| Ten-hour day on the remotes | FS §11.2 |
-| RSSI per remote, debounced link state | `PROTOCOL.md` §7 |
-
-### 5.2 Bluetooth LE against Enhanced ShockBurst
-
-Both ends are Nordic silicon, so a proprietary link is genuinely available and worth taking seriously rather than dismissing.
-
-**Enhanced ShockBurst** is attractive on three of the requirements. It is a star topology with one Primary Receiver and up to eight Primary Transmitters, which is our shape exactly. It does packet acknowledgement and automatic retransmission in hardware, with a configurable retransmit count and delay. And critically, **the PRX discards repeated packets**, so a retransmitted press is not delivered twice — link-layer exactly-once, which is the guarantee `PROTOCOL.md` §5.3 is built on. Latency is excellent: there is no connection interval to wait for, so a press goes out when it happens.
-
-It fails on three others, and the third is decisive.
-
-- **No channel hopping.** ESB does not do adaptive frequency hopping. A fixed channel in a hall with venue Wi-Fi, hundreds of spectator phones and 29 other systems is exactly the environment `SCOPE.md` §4 says the product must survive. Frequency agility would have to be built — which is what Gazell is, and adopting Gazell brings its own constraints.
-- **No security of any kind.** ESB traffic is plaintext with no authentication. FS §2.3 requires pairing to be cryptographically enforced rather than proximity-based, because cross-system association is a scoring-integrity failure. That layer would be ours to write and get right, over a link where getting it wrong corrupts two matches at once and need not be obvious to either referee. The nRF52840 has CryptoCell-310 and hardware AES-CCM, so it is feasible — but it is our code holding scoring integrity.
-- **The downlink is backwards for this product.** In ESB, PRX→PTX data rides only as a payload attached to an acknowledgement, and acknowledgement payloads must be **preloaded** — a transmitter cannot send a command and get a direct response to it. Our downlink is not a response channel: it is a 1 Hz heartbeat, plus per-press acknowledgement taps, plus expiry buzzes and indicator assertions, all originated by the scoreboard asynchronously. Delivering that over ESB means the remotes poll continuously, which spends the battery budget on the uplink to service a downlink, and adds a polling interval to every acknowledgement.
-
-**Bluetooth LE** answers all three. Connection events are bidirectional by construction, so the downlink costs nothing extra. Adaptive frequency hopping across 37 data channels is the mechanism the density requirement needs, and Wi-Fi-overlapping channels can be marked bad in the channel map. LE Secure Connections with bonding gives cryptographically enforced pairing directly, with no protocol of our own between us and scoring integrity.
-
-The question BLE has to answer is latency. Standard minimum connection interval is 7.5 ms, and Nordic's own multi-link HID guidance uses **10 ms rather than 7.5 ms whenever more than one connection is active**, because 7.5 ms with multiple links produces link-layer scheduling conflicts that show up as dropped report rates and disconnections. Two remotes means two connections, so 10 ms is the naive figure — and a 10 ms interval with retransmission slots is uncomfortably close to the 25 ms allocation before body shadowing is considered.
-
-Two mechanisms close that gap, both available on nRF52 in the pinned SDK:
-
-- **Shorter Connection Intervals (SCI)**, from Bluetooth 6.2 and present in NCS since v3.2.0, extends the interval range down to 1.25 ms in the mandatory range and 375 µs in the extended range, and mandates connection subrating. It is supported across the Nordic portfolio including the nRF52 series. Because both ends of this link are ours, the usual objection — that consumer hosts will not support it for years — does not apply.
-- **Low Latency Packet Mode (LLPM)**, Nordic proprietary, gives a 1 ms interval on LE 2M PHY. Note that Nordic's own desktop application drops to 10 ms when LLPM is combined with more than one connection, for the same scheduling reason.
-
-**Starting position:** Bluetooth LE, dongle as central holding two peripheral connections, LE 2M PHY, SCI negotiated to the shortest interval both ends support with 10 ms as the fallback, LE Secure Connections with bonding for the fixed set pairing. ESB is retained as the documented fallback if measured latency at density fails — and if it is adopted, the channel-hopping and security layers are scoped as first-class work, not as details.
-
-**Do not treat this as settled.** It is a reasoned starting point from documentation, and the numbers that matter — latency at 12 m through a torso, with 29 other systems in the hall — cannot be obtained from documentation.
-
-### 5.3 Where the dongle sits is part of the link budget
-
-The Raytac MDBT50Q-CX-40 carries an MDBT50Q-P1M module with a PCB trace antenna, and the nRF52840 will do up to +8 dBm. The dongle then sits in a USB port on a laptop at the scoreboard table: close to the host's own 2.4 GHz radios, often below table height, frequently with bodies between it and the mat.
-
-The link budget must be taken **at the dongle as deployed**, not on a bench with clear line of sight. If it does not close, the available remedies are a USB extension cable to raise and separate the dongle, higher transmit power, or a dongle placement constraint in the deployment documentation — in that order of preference.
-
-### 5.4 Seams that exist in the code today
-
-Each is currently satisfied by a stand-in, and each is where M3 attaches:
-
-| Seam | Location | Currently |
-|---|---|---|
-| Link state source | `engine.c` — `links[]`, populated under `#ifdef CONFIG_DONGLE_FAKE_LINK` | Synthetic `CONNECTED` with fixed RSSI and battery |
-| Event origination | `engine.c` — `send_evt()` | Called only from `test_handler()` |
-| Acknowledgement delivery | `engine.c` — pending table | Pulses an LED, not routed by `src` |
-| Indicator assertion | *does not exist* | New at M2 |
-| Haptic delivery | `engine.c`, `indicator.c` | LED pulses |
-| Remote join detection | *does not exist* | New at M3; drives `JOIN` |
-
-`send_evt()` already allocates and wraps the sequence number and registers confirmable actions in the pending table, so a press arriving from a remote needs to reach *that function* rather than reimplement around it.
-
-### 5.5 Questions M3 has to answer
-
-- Does radio work share the system workqueue (§4.6), or does the engine need its own? What jitter does the 1 Hz heartbeat tolerate, and what does the 120 ms acknowledgement budget tolerate?
-- How is a physical remote bound to the `RED` / `GREEN` identity, and how is the officiating-set serial provisioned so `HELLO` can report it?
-- What is the measured one-way latency at 12 m through body shadowing, at density — and what is its p99, not its median?
-- How is `LINK` state derived and debounced so a remote at the edge of range does not flood the USB link with transitions?
-- Where do presses go that arrive while the app is disconnected — dropped, or queued? *(Dropped. A queued press applied minutes later is a wrong score with no visible cause. But it must be counted and surfaced.)*
-- What is the power cost of a 1 Hz downlink beat to one remote plus the connection cadence the acknowledgement budget requires, against the ten-hour target?
-
----
-
-## 6. How the radio can regress the USB link
-
-**Read this before writing radio code, not after.** The USB interface is validated in an environment with no radio. Adding one can degrade it without touching a line of USB code.
-
-| # | Risk | Test |
-|---|---|---|
-| B1 | **Workqueue contention.** Every engine timer and the RX drain run on the system workqueue (§4.6). Radio work on the same queue delays them. Shows up as acknowledgement latency, not as an error. | Re-run V4 and V5 with the radio active and both remotes connected. Measure the `EVT`→`ACK`→tap path, p99. Consider a dedicated workqueue. |
-| B2 | **Transmit ring saturation.** The TX ring is 1024 bytes and drops whole lines when full. Two remotes at 1 Hz heartbeat, plus 10 s `LINK` re-emission, plus event traffic, raises the line rate well above bench conditions. | Run V8 with both remotes connected and pressing. **Instrument the drop path with a counter first** — an uninstrumented drop is a silent loss. |
-| B3 | **`CONFIG_DONGLE_FAKE_LINK` still enabled.** Leaves the dongle reporting synthetic `CONNECTED` while real remotes are disconnected. | Set it to `n`. Confirm `INFO` reports `DISCONNECTED` with no remotes powered. |
-| B4 | **`LINK` state churn.** Real connections flap at the edge of range. Each transition is a line, and the app renders link loss as a primary-tier alarm. | Power-cycle a remote repeatedly at the edge of range. Confirm no flood and no strobing indicator. |
-| B5 | **Real RSSI and battery values.** Bench values are constants. Real ones can fall outside the ranges the app accepts, and an out-of-range value is dropped silently. | Verify at various distances and charge levels. |
-| B6 | **Acknowledgement routing.** Every acknowledgement currently pulses the same LED. It must reach the **originating remote only**, routed by the `src` recorded against that `seq`. | Press RED and GREEN in quick succession; confirm each tap lands on the correct wrist. |
-| B7 | **The 120 ms budget now includes two radio hops.** This is the risk most likely to bite in a real match. | Re-measure after the radio lands. Distribution, not median. |
-| B8 | **Heartbeat contention with acknowledgement.** New at v3.0. The beat and the tap share one motor, and a four-press burst takes about a second, so they *will* collide (FS §11.1). | Confirm burst suppression in the app, and confirm amplitude separation on real hardware with a real strap. |
-
----
-
-## 7. Validation — how to use the ladder
-
-**Work the rungs in order.** Each isolates one failure domain, and a failure high up is uninterpretable if a lower rung was skipped. Record the date and firmware version against each result in §12.
+**Work the rungs in order.** Each isolates one failure domain, and a failure high up is uninterpretable if a lower rung was skipped. Record the date and firmware version against each result in §9.2.
 
 The interface "works" in the sense that a happy path completed once. That is a much weaker claim than "reliable", and the gap between them is where this class of system fails: at hour three, on a cable pull, on a backgrounded tab, on someone else's laptop.
 
 **V1–V3 passed against protocol v2.0 and are void.** The message set they exercised no longer exists. They are cheap to re-run and must be, after M2.
 
-### 7.1 Test rig
+### 5.1 Test rig
 
 | Item | Value |
 |---|---|
@@ -256,14 +324,10 @@ The interface "works" in the sense that a happy path completed once. That is a m
 
 **The COM port is exclusive.** A serial terminal and the app cannot both hold it. Commands go to the dongle from the app's debug panel.
 
-**Two standing traps:**
+### 5.2 Two standing traps
 
 - **`TEST 3` suspends link supervision until `TEST 0` or reboot.** Left on, every supervision test in V5 passes for the wrong reason. Send `TEST 0` first and confirm the reply.
 - **`CONFIG_DONGLE_FAKE_LINK=y` fabricates `LINK … CONNECTED`** with synthetic RSSI and battery. Any test that appears to validate link reporting is validating a constant until this is `n`.
-
----
-
-## 8. The ladder
 
 ### V0 — Parser unit tests (host, no hardware) — **NEVER RUN**
 
@@ -275,9 +339,9 @@ cd dongle/tests/protocol && make check
 
 **Pass:** all cases green, exit 0. Covers `PROTOCOL.md` §14 T1–T16, encoder round-trips, and the `LINK` RSSI constraint of §7.
 
-**Priority: highest.** The firmware parser is currently trusted on inspection alone. Every bug caught here is a bug not chased over USB. Run it on any Linux box, WSL, macOS, or MinGW/MSYS2 install. The v3.0 cases T11–T16 are new and include the two that fail closed: T7, the v2.0-shaped gestureless `EVT`, and T16, the duplicate `seq`.
+**Priority: highest.** The firmware parser is currently trusted on inspection alone. Every bug caught here is a bug not chased over USB. Run it on any Linux box, WSL, macOS, or MinGW/MSYS2 install. The v3.0 cases T11–T16 are new and include the two that fail closed: T7, the v2.0-shaped gestureless `EVT`, and T16, the duplicate `seq`. Where this runs *permanently* is an open decision — §3.2.
 
-The app's counterpart suite (`npm test` in `wrsl-app`) does run and passes.
+The app's counterpart suite (`npm test` in `wrsl-app`) does run: **113 tests green** at M1, covering the same §14 cases from the other side. That asymmetry is worth naming — one end of this protocol is tested and the other is not, and they are supposed to agree.
 
 ### V1 — Manual terminal, no browser
 
@@ -372,18 +436,18 @@ Revert afterwards. This is cheap and it is the only mechanism protecting against
 
 **Do not judge scoreboard correctness during V8.** `TEST 2` fires at random and the board will look nonsensical by design. V8 measures throughput, `seq` integrity and latency; V3 is the behavioural test.
 
-**Instrumentation gap:** the app logs gaps as one-off warnings into a ring buffer that will have rolled over long before anyone reads it. Running counters — gaps, duplicates, dropped beats, latency distribution, connection uptime — and a log export must exist before V8 is attempted, or the result is unfalsifiable. This is M1 work.
+**Instrumentation — closed at M1.** The v2.0 app logged gaps as one-off warnings into a ring buffer that would have rolled over long before anyone read it, which made V8 unfalsifiable. Running counters now exist (§2.3), with a JSON diagnostics export from the detail panel. **Export at the start of the soak as well as the end** — the counters are cumulative and monotonic, so a single reading at the end cannot distinguish a fault at hour one from a fault at hour four.
 
 ---
 
-## 9. Deployment validation — **NOT RUN**
+## 6. Deployment validation — **NOT RUN**
 
 The product ships from a website onto organisation-managed computers. That introduces failure modes no bench test reveals.
 
 | # | Test | Pass criteria |
 |---|---|---|
 | D1 | Serve over real HTTPS (not localhost) | Works. Plain `http://` on a LAN IP will **not** |
-| D2 | Chromium-based browsers | Connects. Non-Chromium degrades with a clear message rather than a broken page |
+| D2 | Chromium-based browsers, **on a stock profile** (§2.4) | Connects. Non-Chromium degrades with a clear message rather than a broken page |
 | D3 | Linux client | Port opens. Requires `dialout` membership or a udev rule — without it Chrome lists the port and fails to open it, opaquely |
 | D4 | Machine with `DefaultSerialGuardSetting=2` | App detects the block and says so in plain language, not as a raw DOMException |
 | D5 | Machine with `SerialAllowUsbDevicesForUrls` allowlisting the origin + VID/PID | Connects with **no picker and no prompt** |
@@ -397,18 +461,7 @@ The product ships from a website onto organisation-managed computers. That intro
 
 ---
 
-## 10. Interop constraints stricter than the spec reads
-
-Real, discovered during implementation, each of which would present as a silent mystery rather than an error. All four are now written into `PROTOCOL.md` — the spec should describe what shipped.
-
-1. **`LINK <remote> CONNECTED` without an RSSI value is rejected.** Firmware must always emit it when connected. Symptom if violated: the signal indicator silently never updates. Now mandatory in `PROTOCOL.md` §7.
-2. **Resynchronisation happens at the next `\n`, never at a chunk boundary.** A read boundary carries no information about the stream. The app had a bug here (fixed 2026-08-07); `PROTOCOL.md` §2.2 carries the clarifying paragraph and T9c pins it.
-3. **Nothing but the protocol may write to the CDC-ACM port** (§4.4). If either guard is relaxed, log output interleaves with protocol traffic, corrupting lines intermittently and silently.
-4. **The acknowledgement must fire on the originating remote only**, routed by the `src` recorded against that `seq`. A broadcast tap is indistinguishable from a correct one in single-remote bench testing and wrong in every real match.
-
----
-
-## 11. Unmeasured risks
+## 7. Unmeasured risks
 
 ### R1 — Background-tab throttling versus the heartbeat — **materially worse at v3.0**
 
@@ -424,11 +477,13 @@ At v2.0 this threatened only the liveness proof, because the heartbeat was gener
 
 **Mitigations, in order of preference:** a screen wake lock, which is appropriate anyway for an application driving a public display; moving the beat and `PING` into a Web Worker, which is not throttled the same way; and surfacing loss of foreground in the primary tier so the operator sees the state the assumption was violated in. Widening the supervision timeout is not a mitigation — it weakens the fail-safe the whole design rests on.
 
+**Applied at M1:** the screen wake lock, and a foreground banner that appears the moment the window loses visibility. **Not applied:** the Web Worker, which is the only one of the three that actually keeps the beat running rather than merely telling the operator it stopped. Deliberately deferred — it is real work, and the test above has to run first to establish whether the wake lock alone is sufficient in practice. Until that test runs, `SCOPE.md` §5's foregrounded-window assumption is load-bearing in a way it was not at v2.0.
+
 ### R2 — The 120 ms acknowledgement budget has never been measured
 
 `PROTOCOL.md` §11 allocates 120 ms across six hops. The v2.0 round trip through React render and the browser event loop was never measured even against 500 ms, and that path is now allocated 25 ms with two radio hops added around it.
 
-**Test:** with `TEST 2` as background load, pair each `RX EVT … <seq>` with its `TX ACK <seq>` and take the difference. **Measure the distribution, not the median** — p99 is what matters.
+**Test:** with `TEST 2` as background load, pair each `RX EVT … <seq>` with its `TX ACK <seq>` and take the difference. **Measure the distribution, not the median** — p99 is what matters. The app's ack-latency counters (§2.3) make the app share measurable the moment M2 lands.
 
 **Fail:** any sample approaching the app's 25 ms allocation, or any total approaching 120 ms once the radio exists.
 
@@ -452,34 +507,57 @@ Measure average current attributable to the radio at the connection cadence the 
 
 ---
 
-## 12. Definition of done, and the results log
+## 8. Known gaps and debt
 
-- [ ] V0 green on a machine with a C compiler
-- [ ] V1–V8 pass at v3.0, recorded below with dates and firmware version
+| Item | Impact |
+|---|---|
+| **Firmware still at v2.0** | The two ends do not interoperate. Every hardware rung is blocked. M2 |
+| Host parser tests never executed | The firmware parser is trusted on inspection alone, and M2 rewrites it. Highest-value outstanding item; needs only a machine with a C compiler |
+| V4–V8 never run | Supervision, reconnect and soak behaviour unverified |
+| Rulesets not verified against current rulebooks | The library is written and the schema is right, but the **numbers have not been checked against the published rules for the current cycle**. They are implementation-accurate, not authoritative. This must happen before any real match and again at each rules cycle |
+| USB identity is Zephyr's test VID/PID | Blocks the enterprise deployment path (D5) |
+| `requestPort()` has no `filters` | Users can select the wrong serial device. Blocked on a real VID/PID |
+| Connection errors surface raw DOMException text | A policy block is indistinguishable from a cancelled picker (D4) |
+| Heartbeat survives only in the foreground | Wake lock and banner applied; the Web Worker that would actually keep it running is not. R1 |
+| No remote hardware | Every haptic and indicator requirement is unvalidated on the surface that carries it |
+| Design-system fonts fetch from Google Fonts | `design-system/tokens/fonts.css`. Survivable — the pre-event load caches them and every family falls back to a system face — but self-hosted `.woff2` is the correct fix when licensed binaries exist |
+
+**Closed at M1:** soak instrumentation (running counters and a JSON diagnostics export now exist, so V8 is falsifiable); the ruleset library (written as data, though see the verification gap above).
+
+---
+
+## 9. Definition of done and history
+
+### 9.1 Definition of done
+
+- [x] Application at v3.0, tested and browser-verified (M1)
+- [x] Soak instrumentation exists — counters and diagnostics export
+- [ ] V0 green on a machine with a C compiler, and a decision on where it runs permanently (§3.2)
+- [ ] V1–V8 pass at v3.0, recorded in §9.2 with dates and firmware version
 - [ ] R1–R6 measured, with mitigations applied where they fail
 - [ ] D1–D8 pass; real VID/PID assigned and `requestPort()` filtered
 - [ ] V8 clean for ≥4 h with zero sequence gaps and zero applied duplicates, using real instrumentation
-- [ ] §6 re-run in full after the radio lands
+- [ ] Every ruleset in the library checked against the published rulebook for the current cycle
+- [ ] §3.4 re-run in full after the radio lands
 - [ ] `PROTOCOL.md` amended for any further constraint that proves real
+
+### 9.2 Results log
 
 | Date | FW | Proto | Rung | Result | Notes |
 |---|---|---|---|---|---|
 | 2026-08-07 | 0.1.0 | 2.0 | V1 | pass | *void at v3.0* — `ERR APP_TIMEOUT` observed and correct |
 | 2026-08-07 | 0.1.0 | 2.0 | V2 | pass | *void at v3.0* — handshake and PING cadence confirmed |
 | 2026-08-07 | 0.1.0 | 2.0 | V3 | pass | *void at v3.0* — `TEST 1`, seven events, confirmation round trip |
+| 2026-08-09 | — | 3.0 | app | pass | M1: 113 tests, lint and build clean, browser-verified against `FakeDongleTransport`. **Not a ladder rung** — no hardware involved |
 | | | | | | |
 
----
+### 9.3 Project history
 
-## 13. Known gaps and debt
-
-| Item | Impact |
+| Date | Event |
 |---|---|
-| Host parser tests never executed | The firmware parser is trusted on inspection alone. Highest-value outstanding item; needs only a machine with a C compiler |
-| V4–V8 never run | Supervision, reconnect and soak behaviour unverified |
-| Soak instrumentation missing | No running counters for gaps, duplicates, dropped beats or latency, and no log export. V8 is unfalsifiable without them. M1 work |
-| USB identity is Zephyr's test VID/PID | Blocks the enterprise deployment path (D5) |
-| `requestPort()` has no `filters` | Users can select the wrong serial device |
-| Connection errors surface raw DOMException text | A policy block is indistinguishable from a cancelled picker |
-| No remote hardware | Every haptic and indicator requirement is unvalidated on the surface that carries it |
-| Ruleset library incomplete | The configuration schema exists; the preconfigured rulesets are M1/M5 work and must be verified against the current rulebooks at each rules cycle |
+| 2026-07-31 | Repository created |
+| 2026-08-06 | Protocol v2.0 (newline-delimited ASCII; superseded v1.0's binary framing — `PROTOCOL.md` §16) |
+| 2026-08-07 | **M0**: dongle USB firmware 0.1.0 working on hardware at v2.0; V1–V3 passed |
+| 2026-08-09 | `SCOPE.md` v1.1 and `SYSTEM_FUNC_SPEC.md` v2.1 adopted as authoritative; `PROTOCOL.md` v3.0 written against them (breaking) |
+| 2026-08-09 | **M1**: scoreboard application at v3.0 — 113 tests, lint and build clean, browser-verified |
+| 2026-08-09 | Dongle emulator built (`wrsl-app/src/emulator/`): the dongle half of v3.0 over real Web Serial, with interactive mockups of both remotes. Settles how the interface is validated before firmware — §3.2. Suite now 137 tests. Verified end to end over a virtual serial pair: handshake, indicator assertion per remote, acknowledgement routing, and the gesture axis |
