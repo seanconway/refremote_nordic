@@ -2,7 +2,7 @@
 
 **Version:** 3.0
 **Link:** USB CDC-ACM (virtual COM port), nRF52840 dongle ↔ browser via Web Serial
-**Scope:** the wired link between the dongle and the scoreboard application only. The radio link between dongle and wrist remotes is a separate protocol, specified separately; §12 states only what this link assumes of it.
+**Scope:** the wired link between the dongle and the scoreboard application only. The radio link between dongle and wrist remotes is a separate protocol, specified in `RADIO_PROTOCOL.md`; §12 states only what this link assumes of it.
 
 **Governing documents:** *Project Scope* v1.1 and *Functional Specification* v2.1. Where this document and those disagree, they win. Section references of the form *FS §7.3* point at the functional specification.
 
@@ -217,7 +217,7 @@ FS §7.3 is unambiguous: a silently dropped or doubled scoring input corrupts th
 
 The range is `0`–`65535` rather than v2.0's `0`–`999`. A held clock adjustment repeats at 150 ms; at that rate a 1000-entry space wraps in two and a half minutes, which is close enough to a match that a delayed duplicate and a genuine new event could collide on the same number. 65536 entries wrap in under three hours of *continuous* hold-repeat and never in practice.
 
-**Order is receipt order.** The dongle assigns `seq` in the order events arrive from the radio; the scoreboard attributes them in the order it receives them. Remotes do not timestamp (FS §7.3). This assumes referee input intervals comfortably exceed transit variance — an assumption held open as a validation item, not a proven fact (see PLAN.md).
+**Order is receipt order.** The dongle assigns `seq` in the order events arrive from the radio; the scoreboard attributes them in the order it receives them. Remotes do not timestamp (FS §7.3). This assumes referee input intervals comfortably exceed transit variance — an assumption held open as a validation item, not a proven fact (see `RADIO_PROTOCOL.md` §6.4 and PLAN.md).
 
 ---
 
@@ -474,7 +474,7 @@ Out of scope to specify, in scope to constrain. These are the assumptions the US
 
 **Two facts about the dongle hardware bear on the above.** The board is `raytac_mdbt50q_cx_40_dongle/nrf52840` — a Raytac MDBT50Q-P1M module, PCB trace antenna, nRF52840 at up to +8 dBm. It sits in a USB port on a laptop at the scoreboard table, which is a poor RF location: close to the host's own 2.4 GHz radios and often below table height with bodies between it and the mat. The link budget must be taken at the dongle as deployed, not on a bench.
 
-The radio-layer choice — Bluetooth LE against Enhanced ShockBurst, and the connection-interval and retransmission parameters under it — is a milestone in its own right and is worked in PLAN.md, where the trade-offs are laid out against these numbers.
+The radio-layer choice — Bluetooth LE against Enhanced ShockBurst, and the connection-interval and retransmission parameters under it — is specified in `RADIO_PROTOCOL.md`, against these numbers. Status and measurement are tracked in PLAN.md.
 
 ---
 
