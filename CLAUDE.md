@@ -13,6 +13,7 @@ Each document has one job. Read in this order; later documents answer to earlier
 | `SCOPE.md` | What the system is, who it is for, what is out of scope | **Authoritative on direction**, with `SYSTEM_FUNC_SPEC.md` |
 | `SYSTEM_FUNC_SPEC.md` | How the system behaves | **Authoritative on behaviour.** Cited as "FS §n" |
 | `PROTOCOL.md` | The dongle ↔ scoreboard wire contract | Answers to both of the above. Byte-identical in both repos |
+| `RADIO_PROTOCOL.md` | The dongle ↔ remote radio contract. The counterpart to `PROTOCOL.md`, and `PROTOCOL.md` §12 is its acceptance criteria | Answers to both of the above. **This repo only** — the app never sees the radio |
 | `PLAN.md` | **The living status document**: current state (§1), completed work (§2), planned work (§3), binding decisions (§4), the validation ladder (§5–§6), risks and gaps (§7–§8), results log and version history (§9) | Answers to all of the above |
 | `README.md` (this repo) | Overview of the **embedded domain**: system composition, hardware, the stateless-remote architecture, layout | Orientation |
 | `dongle/README.md` | The **dongle firmware** specifically: layout, build, flash, manual test, configuration | Orientation and procedure |
@@ -27,7 +28,7 @@ If a change would contradict `SCOPE.md` or `SYSTEM_FUNC_SPEC.md`, **that is a co
 
 | Repo | Holds |
 |---|---|
-| `refremote_nordic` (this one) | Firmware: dongle, later the remotes. All four specification documents and `PLAN.md`. |
+| `refremote_nordic` (this one) | Firmware: dongle, later the remotes. All five specification documents and `PLAN.md`. |
 | `wrsl-app` | The scoreboard web application. |
 
 `PROTOCOL.md` and `README.md` exist in both. **`PROTOCOL.md` must be byte-identical across the two** — edit it in `refremote_nordic` and copy.

@@ -13,6 +13,8 @@ Two documents define the project. **They are the authority on direction; everyth
 | [`SCOPE.md`](SCOPE.md) | Problem, market, rulesets in and out of scope, deployment envelope, operating assumptions, design principles, external officiating responsibilities, release scope, project risks |
 | [`SYSTEM_FUNC_SPEC.md`](SYSTEM_FUNC_SPEC.md) | How the system behaves: division of responsibility, physical interface, input model, button functions, the secondary athlete clock, communication-layer and application requirements, indicators, haptics, ruleset configuration |
 
+The two protocols answer to them, and to each other: [`PROTOCOL.md`](PROTOCOL.md) is the dongle ↔ scoreboard wire contract, [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) is the dongle ↔ remote radio contract, and `PROTOCOL.md` §12 — *what this link assumes of the radio* — is the acceptance criteria of the latter.
+
 Read `SCOPE.md` §7 before proposing a design change. Those five principles — operable by feel, the referee owns rule application, pure front-end and offline, ruleset logic in one place, simplicity over coverage — decide most arguments before they start.
 
 ## System composition
@@ -55,6 +57,7 @@ Everything follows from that:
 SCOPE.md                 project scope — authoritative
 SYSTEM_FUNC_SPEC.md      functional specification — authoritative
 PROTOCOL.md              dongle ↔ scoreboard wire protocol v3.0
+RADIO_PROTOCOL.md        dongle ↔ remote radio protocol v1.0 — this repo only
 PLAN.md                  living status document — completed work, planned work,
                          binding decisions, the validation ladder, version history
 dongle/                  USB bridge firmware
@@ -73,7 +76,7 @@ remote/                  wrist remote firmware — not started
 
 ## Status
 
-The USB half of the dongle is built and working on real hardware against protocol **v2.0**. Protocol **v3.0** is a breaking revision written against the functional specification, and the firmware has not yet been brought up to it. The radio layer is not started, and the remotes do not exist.
+The USB half of the dongle is built and working on real hardware against protocol **v2.0**. Protocol **v3.0** is a breaking revision written against the functional specification, and the firmware has not yet been brought up to it. The radio layer is **specified but not implemented** — [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0 — and the remotes do not exist.
 
 [`PLAN.md`](PLAN.md) carries the current state in detail, the record of completed work, the planned work in order, the decisions that still bind, and the validation ladder with its results log. **Read it before writing code**, particularly §3.4, which lists the ways the radio layer can regress the USB link without touching any USB code.
 

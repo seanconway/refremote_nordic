@@ -1,6 +1,6 @@
 # RefRemote — Plan, Status and Validation
 
-**Status as of 2026-08-09.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** is the revision that answers to them, and it is a breaking change against the v2.0 prototype. The scoreboard application is at v3.0 (M1, complete); the dongle firmware is still at v2.0 (M2, next); the radio layer is not started and the remotes do not exist.
+**Status as of 2026-08-10.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** is the revision that answers to them, and it is a breaking change against the v2.0 prototype. The scoreboard application is at v3.0 (M1, complete); the dongle firmware is still at v2.0 (M2, next); the radio layer is **specified** — `RADIO_PROTOCOL.md` **v1.0** — but not implemented, and the remotes do not exist.
 
 **This is a living document.** It carries the current state of the project (§1), the record of completed work and what it settled (§2), the planned work in order (§3), the decisions that still bind (§4), the full validation ladder (§5–§6), the unmeasured risks (§7), known gaps (§8), and the results log and version history (§9). The validation plan previously lived in `dongle/VALIDATION.md` and has been rolled in here (§5–§6), because a status document that points at a separate test plan gets read as a status document.
 
@@ -9,6 +9,7 @@
 | What the system is and why | [`SCOPE.md`](SCOPE.md) |
 | How it behaves | [`SYSTEM_FUNC_SPEC.md`](SYSTEM_FUNC_SPEC.md) |
 | The wire protocol | [`PROTOCOL.md`](PROTOCOL.md) |
+| The radio protocol | [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) |
 | Build, flash, manual test | [`dongle/README.md`](dongle/README.md) |
 
 ---
@@ -20,7 +21,7 @@
 | **M0** | USB link at v2.0, working on hardware | ✅ done — §2.1 |
 | **M1** | Scoreboard application to v3.0, the functional specification, and the design system | ✅ done — §2.3 |
 | **M2** | **Dongle USB firmware to v3.0** | ▶ next — §3.1 |
-| **M3** | Radio layer and remote firmware | §3.3 |
+| **M3** | Radio layer and remote firmware | protocol specified, firmware not started — §3.3 |
 | **M4** | Validation ladder and deployment validation | §5–§6 |
 | **M5** | MVP hardening — USB identity, instrumentation, ruleset library | §8 |
 
@@ -28,6 +29,7 @@
 |---|---|
 | `SCOPE.md`, `SYSTEM_FUNC_SPEC.md` | Current. Authoritative. |
 | `PROTOCOL.md` v3.0 | Written against the specification. Implemented on the app side only. Byte-identical in both repos. |
+| `RADIO_PROTOCOL.md` v1.0 | Written against the specification and against `PROTOCOL.md` §12. **Implemented nowhere.** Every latency figure in it is a prediction awaiting measurement. This repo only. |
 | Scoreboard app | **v3.0, M1 complete.** 113 tests passing across protocol, reducer and service suites. Lint and production build clean. |
 | Dongle USB firmware | **Still v2.0**: framing, parser, clock, heartbeat, supervision, `CONFIRM`, TEST modes. 52 KB flash, 19 KB RAM. Milestone M2 brings it to v3.0. |
 | Dongle radio | **Not started.** `CONFIG_DONGLE_FAKE_LINK` fabricates link state; LEDs stand in for haptics. |
@@ -165,7 +167,7 @@ The pieces:
 
 ### 3.3 M3 — the radio layer
 
-Not designed here. What follows is the starting position, the evidence behind it, and the questions that have to be answered first.
+**The protocol is now designed: [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0, written 2026-08-10.** What follows is the requirement it answers to, the four architectural decisions it commits the project to, the seams in the code it attaches at, and the questions it deliberately leaves open.
 
 #### What the radio has to deliver
 
@@ -181,30 +183,20 @@ From `PROTOCOL.md` §12 and the specification:
 | Ten-hour day on the remotes | FS §11.2 |
 | RSSI per remote, debounced link state | `PROTOCOL.md` §7 |
 
-#### Bluetooth LE against Enhanced ShockBurst
+#### The four decisions the protocol commits to
 
-Both ends are Nordic silicon, so a proprietary link is genuinely available and worth taking seriously rather than dismissing.
+Taken deliberately, with the alternatives written up in `RADIO_PROTOCOL.md` §15 rather than discarded, and recorded as binding in §4.8 below.
 
-**Enhanced ShockBurst** is attractive on three of the requirements. It is a star topology with one Primary Receiver and up to eight Primary Transmitters, which is our shape exactly. It does packet acknowledgement and automatic retransmission in hardware, with a configurable retransmit count and delay. And critically, **the PRX discards repeated packets**, so a retransmitted press is not delivered twice — link-layer exactly-once, which is the guarantee `PROTOCOL.md` §5.3 is built on. Latency is excellent: there is no connection interval to wait for, so a press goes out when it happens.
+| Decision | Resolution | Rationale |
+|---|---|---|
+| **Bearer** | Bluetooth LE. Dongle central holding two peripheral connections; ESB/Gazell retained as the documented fallback if measured latency at density fails | ESB gets the topology and hardware exactly-once right, and fails on channel hopping, on having no security at all, and — decisively — on a downlink that rides only as a preloaded acknowledgement payload, which turns our asynchronous downlink into a polled one. `RADIO_PROTOCOL.md` §15.1 |
+| **Timing** | SCI, target 2.5 ms, with a measured fallback ladder to 5 / 7.5 / 10 ms. LE 2M PHY, 27-byte payloads, peripheral latency and subrating both pinned off | The interval is the dominant term in the 25 ms one-way allocation: at 10 ms one retransmission spends the budget, at 2.5 ms eight fit. LLPM rejected as primary — Nordic's own multi-connection guidance moves it to 10 ms. §12 |
+| **Exactly-once** | Device-local 8-bit counter per remote for gap visibility and replay rejection. **No application-level retry**, in either direction | The Link Layer already delivers exactly-once on an intact connection; the counter's real work is making a loss it could not prevent into a number somebody can read. A retry above the link layer fires only when the press is already worthless, and produces the late tap `PROTOCOL.md` §11 forbids. §6 |
+| **Set binding** | Provisioned set key installed as the LTK via `bt_nrf_conn_set_ltk()`; fixed static-random identity addresses; **no pairing procedure is ever performed**, at manufacture or in the field | Manufacture-time bonding stores the binding where a DFU or settings migration can silently clear it, and a set that has forgotten its binding presents at an event as two remotes that will not connect. First-boot auto-bonding opens the pairing window FS §2.3 exists to close. §10 |
 
-It fails on three others, and the third is decisive.
+**The decisions are settled; the numbers are not.** Every latency figure in `RADIO_PROTOCOL.md` §12 is arithmetic from documentation, and the ones that matter — latency at 12 m through a torso, with 29 other systems in the hall — cannot be obtained from documentation. They are stated so the measurement has a prediction to falsify.
 
-- **No channel hopping.** ESB does not do adaptive frequency hopping. A fixed channel in a hall with venue Wi-Fi, hundreds of spectator phones and 29 other systems is exactly the environment `SCOPE.md` §4 says the product must survive. Frequency agility would have to be built — which is what Gazell is, and adopting Gazell brings its own constraints.
-- **No security of any kind.** ESB traffic is plaintext with no authentication. FS §2.3 requires pairing to be cryptographically enforced rather than proximity-based, because cross-system association is a scoring-integrity failure. That layer would be ours to write and get right, over a link where getting it wrong corrupts two matches at once and need not be obvious to either referee. The nRF52840 has CryptoCell-310 and hardware AES-CCM, so it is feasible — but it is our code holding scoring integrity.
-- **The downlink is backwards for this product.** In ESB, PRX→PTX data rides only as a payload attached to an acknowledgement, and acknowledgement payloads must be **preloaded** — a transmitter cannot send a command and get a direct response to it. Our downlink is not a response channel: it is a 1 Hz heartbeat, plus per-press acknowledgement taps, plus expiry buzzes and indicator assertions, all originated by the scoreboard asynchronously. Delivering that over ESB means the remotes poll continuously, which spends the battery budget on the uplink to service a downlink, and adds a polling interval to every acknowledgement.
-
-**Bluetooth LE** answers all three. Connection events are bidirectional by construction, so the downlink costs nothing extra. Adaptive frequency hopping across 37 data channels is the mechanism the density requirement needs, and Wi-Fi-overlapping channels can be marked bad in the channel map. LE Secure Connections with bonding gives cryptographically enforced pairing directly, with no protocol of our own between us and scoring integrity.
-
-The question BLE has to answer is latency. Standard minimum connection interval is 7.5 ms, and Nordic's own multi-link HID guidance uses **10 ms rather than 7.5 ms whenever more than one connection is active**, because 7.5 ms with multiple links produces link-layer scheduling conflicts that show up as dropped report rates and disconnections. Two remotes means two connections, so 10 ms is the naive figure — and a 10 ms interval with retransmission slots is uncomfortably close to the 25 ms allocation before body shadowing is considered.
-
-Two mechanisms close that gap, both available on nRF52 in the pinned SDK:
-
-- **Shorter Connection Intervals (SCI)**, from Bluetooth 6.2 and present in NCS since v3.2.0, extends the interval range down to 1.25 ms in the mandatory range and 375 µs in the extended range, and mandates connection subrating. It is supported across the Nordic portfolio including the nRF52 series. Because both ends of this link are ours, the usual objection — that consumer hosts will not support it for years — does not apply.
-- **Low Latency Packet Mode (LLPM)**, Nordic proprietary, gives a 1 ms interval on LE 2M PHY. Note that Nordic's own desktop application drops to 10 ms when LLPM is combined with more than one connection, for the same scheduling reason.
-
-**Starting position:** Bluetooth LE, dongle as central holding two peripheral connections, LE 2M PHY, SCI negotiated to the shortest interval both ends support with 10 ms as the fallback, LE Secure Connections with bonding for the fixed set pairing. ESB is retained as the documented fallback if measured latency at density fails — and if it is adopted, the channel-hopping and security layers are scoped as first-class work, not as details.
-
-**Do not treat this as settled.** It is a reasoned starting point from documentation, and the numbers that matter — latency at 12 m through a torso, with 29 other systems in the hall — cannot be obtained from documentation.
+**One specification nuance was resolved in the writing and is worth flagging.** FS §2.1 lists link status among the things a remote detects locally; FS §10.2 defines the indication as *connected end to end*. Those reconcile only if the remote is told about the half of the path it cannot see — the USB cable, the browser tab, the laptop's sleep state, the application watchdog of FS §8.3, every one of which leaves the radio connection perfectly healthy while the scoreboard is gone. `PROTOCOL.md` §8 already requires the dongle to *"instruct both remotes to render link-lost"* in prose; `RADIO_PROTOCOL.md` §9.2 gives that requirement a frame (`DN_HOST`) and states the rule: the remote renders `LED_LINK` from the **conjunction** of radio-up and host-up. It still detects its own link state; the state simply has two inputs. This is a refinement of FS §2.1, not a contradiction of it, but it is the kind of thing that should be noticed rather than absorbed.
 
 #### Where the dongle sits is part of the link budget
 
@@ -227,14 +219,24 @@ Each is currently satisfied by a stand-in, and each is where M3 attaches:
 
 `send_evt()` already allocates and wraps the sequence number and registers confirmable actions in the pending table, so a press arriving from a remote needs to reach *that function* rather than reimplement around it.
 
-#### Questions M3 has to answer
+#### Questions the protocol answers
+
+Listed because they were open in the previous revision of this section and are not any more. Each is a design commitment now, and changing one is a change to `RADIO_PROTOCOL.md`, not a tuning decision.
+
+| Question | Answer | Where |
+|---|---|---|
+| How is a physical remote bound to the `RED` / `GREEN` identity, and how is the set serial provisioned so `HELLO` can report it? | A CRC-checked provisioning record in a dedicated flash partition, written once at manufacture: serial, role, own and peer identity addresses, set key. An unprovisioned unit does not advertise and does not initiate | §10.1 |
+| How is `LINK` state derived and debounced so a remote at the edge of range does not flood the USB link? | `CONNECTED` reported only after encryption, identity validation and subscription; `DISCONNECTED` after 2 s; `CONNECTING` emitted immediately so the app has something true to show meanwhile. The remote's *own* indication is not debounced | §9.4 |
+| Where do presses go that arrive while the app is disconnected? | Dropped, counted, and reported in the first `LOG` line after the app returns. Never queued — a queued press applied minutes later is a wrong score with no visible cause | §6.5 |
+| How does the remote know the difference between "radio up" and "scoreboard reachable"? | It is told, by `DN_HOST`, and renders the conjunction | §9.2 |
+
+#### Questions M3 still has to answer
 
 - Does radio work share the system workqueue (§4.6), or does the engine need its own? What jitter does the 1 Hz heartbeat tolerate, and what does the 120 ms acknowledgement budget tolerate?
-- How is a physical remote bound to the `RED` / `GREEN` identity, and how is the officiating-set serial provisioned so `HELLO` can report it?
-- What is the measured one-way latency at 12 m through body shadowing, at density — and what is its p99, not its median?
-- How is `LINK` state derived and debounced so a remote at the edge of range does not flood the USB link with transitions?
-- Where do presses go that arrive while the app is disconnected — dropped, or queued? *(Dropped. A queued press applied minutes later is a wrong score with no visible cause. But it must be counted and surfaced.)*
-- What is the power cost of a 1 Hz downlink beat to one remote plus the connection cadence the acknowledgement budget requires, against the ten-hour target?
+- What is the measured one-way latency at 12 m through body shadowing, at density — and what is its p99, not its median? Which rung of the §12.2 ladder does the link actually land on?
+- Is `RADIO_PROTOCOL.md` §12.2 rung 1 (2.5 ms, two connections) schedulable on this silicon at all? The arithmetic says yes with headroom and rung 0 says no; neither has been run.
+- What is the power cost of a 1 Hz downlink beat to one remote plus the connection cadence the acknowledgement budget requires, against the ten-hour target — given that peripheral latency and subrating are both ruled out (§9.1) and heartbeat density is not available as a lever (FS §11.2)?
+- Is LE Flushable ACL Data usable in v3.4.0, where it is marked experimental? The deadline guarantee does not rest on it (§8.3 mechanisms 1 and 2 must hold without it), but it is the natural mechanism if it works.
 - How do diagnostics get out during radio bring-up, given the console is disabled and a second CDC instance is forbidden (§4.4)? RTT is the obvious answer and needs the debugger partition table (`fstab-debugger.dtsi`), which means giving up the stock bootloader on the bring-up unit. **Decide before starting, not during.**
 
 ### 3.4 How the radio can regress the USB link
@@ -299,6 +301,18 @@ All engine timers and the RX drain run on the system workqueue, giving exactly o
 ### 4.7 `PROTOCOL.md` is duplicated, not linked
 
 The two copies were previously kept in step by a filesystem hard link. That does not survive an editor writing a new file rather than modifying in place — it silently broke during the v3.0 revision, leaving the two repos on different versions with no indication. Copy explicitly and **verify the hashes match** after any change.
+
+**`RADIO_PROTOCOL.md` is not duplicated.** It lives in this repo only, because the scoreboard never sees the radio and giving it a copy would create a second file to keep in step for no reader's benefit.
+
+### 4.8 The radio is Bluetooth LE, with the four commitments of §3.3
+
+Bearer, timing strategy, exactly-once mechanism and set binding are settled in `RADIO_PROTOCOL.md` v1.0 and summarised in §3.3. Three of them are worth restating here because each is a standing invitation to do the ordinary thing:
+
+- **Do not raise the ATT MTU or enable Data Length Extension.** The 27-byte Link Layer payload is a *precondition* for the shortest connection intervals (`RADIO_PROTOCOL.md` §4.3). Raising it is a normal, sensible optimisation that would spend the latency budget to buy throughput this product does not need, and it would not fail a single test — it would lengthen the acknowledgement tail by milliseconds nobody attributes to it.
+- **Do not enable peripheral latency or connection subrating.** They are the standard BLE power levers and they work by skipping connection events, which is exactly what delays an acknowledgement tap (§9.1). Subrating is enabled only because SCI mandates it, with the subrate factor held at 1.
+- **Do not add an application-level retry to the press path.** Link-layer retransmission inside the connection event is the bounded effort this design wants. Anything above it fires only when the press is already worthless, and delivers the late tap `PROTOCOL.md` §11 rules out (§6.3).
+
+Each of these is the thing a competent implementer following ordinary practice would do, and each fails silently.
 
 ---
 
@@ -512,6 +526,8 @@ Measure average current attributable to the radio at the connection cadence the 
 | Item | Impact |
 |---|---|
 | **Firmware still at v2.0** | The two ends do not interoperate. Every hardware rung is blocked. M2 |
+| Radio protocol specified, implemented nowhere | `RADIO_PROTOCOL.md` v1.0 has no implementation on either side and no conformance suite. Its §14 cases are the counterpart to `PROTOCOL.md` §14 and, like V0, will be trusted on inspection until something runs them. M3 |
+| Every latency figure in `RADIO_PROTOCOL.md` §12 is arithmetic | The connection-interval ladder, the retransmission counts and the 2.5 ms target are predictions from documentation. They have never been near this hardware. R2 |
 | Host parser tests never executed | The firmware parser is trusted on inspection alone, and M2 rewrites it. Highest-value outstanding item; needs only a machine with a C compiler |
 | V4–V8 never run | Supervision, reconnect and soak behaviour unverified |
 | Rulesets not verified against current rulebooks | The library is written and the schema is right, but the **numbers have not been checked against the published rules for the current cycle**. They are implementation-accurate, not authoritative. This must happen before any real match and again at each rules cycle |
@@ -560,4 +576,5 @@ Measure average current attributable to the radio at the connection cadence the 
 | 2026-08-07 | **M0**: dongle USB firmware 0.1.0 working on hardware at v2.0; V1–V3 passed |
 | 2026-08-09 | `SCOPE.md` v1.1 and `SYSTEM_FUNC_SPEC.md` v2.1 adopted as authoritative; `PROTOCOL.md` v3.0 written against them (breaking) |
 | 2026-08-09 | **M1**: scoreboard application at v3.0 — 113 tests, lint and build clean, browser-verified |
+| 2026-08-10 | `RADIO_PROTOCOL.md` v1.0 written against `SCOPE.md`, `SYSTEM_FUNC_SPEC.md` and `PROTOCOL.md` §12. Bluetooth LE as bearer, SCI with a fallback ladder, a device-local counter for gap visibility with no application-level retry, and a provisioned set key with no pairing procedure ever. Settles the M3 architecture; measures nothing — §3.3, §4.8 |
 | 2026-08-09 | Dongle emulator built (`wrsl-app/src/emulator/`): the dongle half of v3.0 over real Web Serial, with interactive mockups of both remotes. Settles how the interface is validated before firmware — §3.2. Suite now 137 tests. Verified end to end over a virtual serial pair: handshake, indicator assertion per remote, acknowledgement routing, and the gesture axis |
