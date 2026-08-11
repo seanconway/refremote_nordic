@@ -9,7 +9,7 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 
 > **What to build is [`BUILD_SPEC.md`](BUILD_SPEC.md)** — the implementable contract for v3.0 plus the radio. This README stays the *procedure* document: layout, build, flash, manual test. Sequence and status are [`PLAN.md`](../PLAN.md) §3.1, where this is M2, one programme in six stages ending in an end-to-end demonstration; §2.6 records what stages 0 and 1 delivered.
 
-> **Before trusting this link in a match, work through the validation ladder in [`PLAN.md`](../PLAN.md) §5–§6.** V0 is green, V1 and V3 are green on the half a terminal can reach, and the haptic downlink is confirmed to render and to route per remote ([`BOARD.md`](BOARD.md) §2.1). **The one thing still unverified is not a formality: the application has never held the port**, so V2 and V4–V6 are untouched. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
+> **Before trusting this link in a match, work through the validation ladder in [`PLAN.md`](../PLAN.md) §5–§6.** V0–V5 are green: the application has now held the port repeatedly, the handshake, the reverse path, and supervision/disconnection (unplug, sleep, kill-browser, the app watchdog) all check out on hardware. **V6 — reconnect lifecycle — is the one rung left** before the no-radio baseline is fully closed. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
 
 ## Layout
 
