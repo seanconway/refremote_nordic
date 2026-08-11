@@ -410,9 +410,11 @@ This exercises the entire firmware with no browser, no scoreboard and no harness
 | `1` | Emit one `EVT` per button, `PRESS`, alternating `RED`/`GREEN`, 500 ms apart — seven events |
 | `2` | Emit random `EVT` lines continuously at ~5 Hz until stopped |
 | `3` | Suspend link supervision until reboot or `TEST 0` (bench use only) |
-| `4` | Sweep every gesture on every button: 21 events per remote, 250 ms apart |
+| `4` | Sweep every gesture on every button: **16 events per remote, 32 total**, 250 ms apart |
 
 Mode 1 gives the scoreboard a deterministic, repeatable stimulus with no remotes and no radio. Mode 4 is new in v3.0 and exists because the gesture axis is new: it is the only cheap way to confirm the app's `HOLD` and `HOLD_REP` handling before any remote hardware exists. Mode 2 is the soak driver.
+
+**The sweep is 16 per remote, not 21, and the arithmetic is worth showing** because the obvious reading of "every gesture on every button" gives the wrong number. Seven buttons take `PRESS` and seven take `HOLD`, but §5.1 emits `HOLD_REP` **only for `FORWARD` and `BACKWARD`** — so 7 + 7 + 2 = 16. A sweep that produced 21 would be emitting `HOLD_REP` on five buttons that can never repeat in the field, which is a stimulus the product does not have and a `HOLD_REP` handler the app would be exercising against traffic no remote will ever send.
 
 **`TEST 3` is a standing trap.** Left on, every supervision test passes for the wrong reason. Send `TEST 0` first and confirm the reply.
 

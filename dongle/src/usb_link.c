@@ -35,6 +35,11 @@ RING_BUF_DECLARE(tx_rb, TX_RING_SIZE);
 static struct proto_asm assembler;
 static usb_link_line_fn line_handler;
 static struct k_work rx_work;
+static struct k_work_q *rx_queue;
+
+/* Whole lines refused, either over-length or with no room in the ring. Read
+ * back by the engine and reported in the handshake LOG line. */
+static uint32_t tx_drops;
 
 /* Serialises producers into tx_rb. The consumer is the ISR; ring_buf is safe
  * for one producer and one consumer, so all we need is to keep producers from
@@ -77,7 +82,7 @@ static void cdc_isr(const struct device *dev, void *user_data)
 				/* Overflow drops bytes; the assembler resynchronises
 				 * at the next terminator. */
 				(void)ring_buf_put(&rx_rb, buf, (uint32_t)n);
-				k_work_submit(&rx_work);
+				(void)k_work_submit_to_queue(rx_queue, &rx_work);
 			}
 		}
 
@@ -100,35 +105,51 @@ static void cdc_isr(const struct device *dev, void *user_data)
 
 /* ------------------------------------------------------------------------ */
 
-void usb_link_send(const char *line)
+int usb_link_send(const char *line)
 {
 	size_t len = strlen(line);
+	bool queued;
 
 	if (len == 0 || len > PROTO_MAX_CONTENT) {
-		return;
+		tx_drops++;
+		return -EMSGSIZE;
 	}
 
 	k_mutex_lock(&tx_lock, K_FOREVER);
 
 	/* All-or-nothing: a half-written line would corrupt the receiver's
 	 * framing until the next terminator. */
-	if (ring_buf_space_get(&tx_rb) >= len + 1u) {
+	queued = ring_buf_space_get(&tx_rb) >= len + 1u;
+	if (queued) {
 		(void)ring_buf_put(&tx_rb, (const uint8_t *)line, (uint32_t)len);
 		(void)ring_buf_put(&tx_rb, (const uint8_t *)"\n", 1u);
+	} else {
+		tx_drops++;
 	}
 
 	k_mutex_unlock(&tx_lock);
 
 	uart_irq_tx_enable(cdc_dev);
+
+	return queued ? 0 : -ENOSPC;
 }
 
-int usb_link_init(usb_link_line_fn on_line)
+uint32_t usb_link_tx_drops(void)
 {
+	return tx_drops;
+}
+
+int usb_link_init(usb_link_line_fn on_line, struct k_work_q *workq)
+{
+	if (workq == NULL) {
+		return -EINVAL;
+	}
 	if (!device_is_ready(cdc_dev)) {
 		return -ENODEV;
 	}
 
 	line_handler = on_line;
+	rx_queue = workq;
 	proto_asm_init(&assembler);
 	k_work_init(&rx_work, rx_work_handler);
 

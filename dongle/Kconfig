@@ -1,16 +1,65 @@
 menu "Dongle bridge options"
 
-config DONGLE_FAKE_LINK
-	bool "Report synthetic BLE link status"
-	default y
+config DONGLE_RADIO
+	bool "Bluetooth LE radio to the wrist remotes"
+	default n
 	help
-	  Reports both remotes as CONNECTED with plausible RSSI and battery
-	  values, so the scoreboard's signal and battery indicators can be
-	  exercised before any BLE code exists.
+	  Selects src/radio_ble.c, the BLE central that talks
+	  RADIO_PROTOCOL.md v1.0 to two wrist remotes.
 
-	  This changes nothing on the wire — the LINK lines are exactly the
-	  ones real remotes would produce. Turn it off to report the truth
-	  (both DISCONNECTED) once BLE is implemented.
+	  n selects src/radio_null.c: both remotes report DISCONNECTED,
+	  the downlink is rendered on the board's two LEDs, and the whole
+	  wire layer runs unchanged, driven by the TEST modes.
+
+	  THE n CONFIGURATION IS RETAINED PERMANENTLY. It is not scaffolding
+	  and it is not a milestone that was green once. PLAN.md §3.10 lists
+	  eight ways adding a radio degrades a working USB link without
+	  touching any USB code, and every one of them is diagnosed by asking
+	  whether it still happens with the radio compiled out. A baseline
+	  you can re-run in thirty seconds answers that.
+
+	  This defaults to n only because radio_ble.c does not exist yet; it
+	  flips to y at Stage 3 (PLAN.md §3.1) when it does.
+
+	  It REPLACES the deleted DONGLE_FAKE_LINK, which reported both
+	  remotes CONNECTED with a fixed RSSI and battery. That symbol was
+	  deleted rather than defaulted off: it fabricated exactly the values
+	  a link test measures, and it did so plausibly, so a forgotten y
+	  produced a passing test. A default is no protection when the
+	  failure mode is forgetting.
+
+config DONGLE_CONN_INTERVAL_UNITS
+	int "BLE connection interval, in 1.25 ms units"
+	depends on DONGLE_RADIO
+	default 6
+	range 6 3200
+	help
+	  6 units = 7.5 ms, rung 3 of RADIO_PROTOCOL.md §12.2 and the
+	  baseline for the whole programme. It is a Kconfig value rather
+	  than a header constant because it is the one tuning number with a
+	  hardware consequence behind it: it feeds the power budget, and
+	  through that the battery sizing and the PCB.
+
+	  A later descent to 2.5 ms (SCI, rung 1) triples connection events
+	  per second, so an undersized battery would become a respin. Size
+	  with headroom. SCI is a deferred contingency, revisited only if
+	  body shadowing proves a problem on custom hardware.
+
+	  Both connections must use the identical interval — central
+	  scheduling needs a common factor between them or their events
+	  collide.
+
+config DONGLE_SET_SERIAL_FALLBACK
+	string "Officiating set serial used before provisioning exists"
+	default "RR-0000"
+	help
+	  Reported in the fourth field of HELLO until the provisioning
+	  record is read from flash (Stage 2), after which this is removed.
+
+	  The default is deliberately not plausible. The app displays this
+	  value for the referee's pre-match check against the label on the
+	  hardware (PROTOCOL.md §4.1, FS §12.3), and a placeholder that
+	  looked like a real serial would pass that check.
 
 endmenu
 

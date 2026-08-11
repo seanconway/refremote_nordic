@@ -15,6 +15,7 @@ Each document has one job. Read in this order; later documents answer to earlier
 | `PROTOCOL.md` | The dongle ↔ scoreboard wire contract | Answers to both of the above. Byte-identical in both repos |
 | `RADIO_PROTOCOL.md` | The dongle ↔ remote radio contract. The counterpart to `PROTOCOL.md`, and `PROTOCOL.md` §12 is its acceptance criteria | Answers to both of the above. **This repo only** — the app never sees the radio |
 | `PLAN.md` | **The living status document**: current state (§1), completed work (§2), planned work and the embedded roadmap (§3, with §3.3 mapping the milestones onto the development phases), binding decisions (§4), the two validation ladders — USB V0–V8 and radio W0–W8 (§5–§6), risks and gaps (§7–§8), results log and version history (§9) | Answers to all of the above |
+| `dongle/BUILD_SPEC.md`, `remote/BUILD_SPEC.md` | **What to build.** Module boundaries, interfaces, state, algorithms, per-stage acceptance. `PLAN.md` says what state the project is in and why the work is ordered as it is; these say what to build | Answer to the protocols. **More specific on mechanism; `PLAN.md` wins on sequence and status** |
 | `README.md` (this repo) | Overview of the **embedded domain**: system composition, hardware, the stateless-remote architecture, layout | Orientation |
 | `dongle/README.md` | The **dongle firmware** specifically: layout, build, flash, manual test, configuration | Orientation and procedure |
 | `wrsl-app/README.md` | The **web application**: responsibilities, architecture, design system, host requirements, deployment | Orientation |
@@ -67,11 +68,30 @@ npm run build    # production build — run before claiming done
 source dongle/tools/ncsenv.sh
 west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build
 # artifact: dongle/build/dongle/zephyr/zephyr.hex
+
+# The no-radio baseline — currently the default, and kept working forever:
+west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build-noradio -- -DCONFIG_DONGLE_RADIO=n
+
+# From stage 4, the DK remote:
+west build -b nrf52840dk/nrf52840 remote -d remote/build
 ```
+
+`-DCONFIG_DONGLE_RADIO=y` deliberately refuses to configure until `src/radio_ble.c` exists at stage 3.
 
 Flash by holding the board button while plugging in (the LED fades), then writing the hex with nRF Connect Programmer. **Not** by pressing RESET — that is the other dongle.
 
-**Host parser tests** — `cd dongle/tests/protocol && make check`. These have never run; there is no C compiler on this machine. See `PLAN.md` §5 rung V0.
+**Host tests** — the two environments are different and neither substitutes for the other:
+
+```bash
+source dongle/tools/hostenv.sh          # a HOST compiler — not ncsenv.sh
+cd dongle/tests/protocol && make check   # 131 checks, green since 2026-08-11
+```
+
+At stage 3, `cd tests/rframe && make check` joins it for the radio frame codec; that suite is not written.
+
+**The host compiler is MinGW-w64 GCC 16.1.0, installed 2026-08-11** with `winget install --id BrechtSanders.WinLibs.POSIX.UCRT -e`. Before that there was no host C compiler on this machine at all — no WSL, no clang, and none inside the NCS bundle, whose `mingw64/bin` holds 50 executables and not one a compiler. **The board toolchain cannot substitute for a host one**: `arm-zephyr-eabi-gcc` emits binaries this machine cannot execute. That assumption is what left the suite unrun from M0 to M2, across four days and two milestones.
+
+**Nothing runs `make check` for you.** It is not wired into `west build` and there is no CI. Run it after any change to `protocol.c`.
 
 **Nordic and Zephyr questions:** use the `nordic-mcp` server (`nordicsemi_search_sources`, `read_resource`) and the installed NCS tree. Do not fetch Nordic or Zephyr documentation from the web.
 
@@ -134,7 +154,10 @@ Each of these cost real time. None of them produces a useful error message.
 | **JSX comment inside a `&&`** | Parse error; `{/* … */}` directly inside a parenthesised `&&` expression is read as an object literal | Use a `//` comment inside the attribute list |
 | **Cancelled Web Serial picker** | An operator dismissing a dialog trips the watchdog and drops the link, so it looks like an application fault | `.catch(() => {})` at every `connect`/`reconnect` call site |
 | **`TEST 3` left on** | Suspends link supervision until `TEST 0` or reboot. Every supervision test then passes for the wrong reason | Send `TEST 0` first and confirm the reply |
-| **`CONFIG_DONGLE_FAKE_LINK=y`** | Fabricates `LINK … CONNECTED` with synthetic RSSI and battery. Any test that appears to validate link reporting is validating a constant | Set it to `n` before any link test |
+| **`CONFIG_DONGLE_FAKE_LINK=y`** | Fabricated `LINK … CONNECTED` with synthetic RSSI and battery, so any test that appeared to validate link reporting was validating a constant | **Deleted 2026-08-11** — `PLAN.md` §4.11 — because a default is no protection when the failure mode is forgetting. Its replacement, `CONFIG_DONGLE_RADIO=n`, reports `DISCONNECTED`, which is true |
+| **`CC ?= gcc` in a makefile** | `make` predefines `CC` as `cc`, so `?=` never fires and the recipe calls a compiler that exists on Unix and not on Windows | `ifeq ($(origin CC),default)`. The point is to override make's *guess* without overriding the user's *choice* |
+| **`$USER` in a Git Bash script** | Unset, so an interpolated path becomes `/c/Users//…` and the failure reads as a missing install rather than a missing variable | `$HOME` |
+| **A synthetic `battery_pct` on the DK remote** | The scoreboard's battery indicator validates a constant. **The same trap with no Kconfig symbol whose name gives it away** | `remote/BUILD_SPEC.md` §8.3 — make the synthetic value obviously synthetic rather than plausible |
 | **A second CDC-ACM instance** | Log output interleaves into the protocol stream; lines corrupt intermittently and silently | Console, shell and logging are off in `prj.conf`, and a `BUILD_ASSERT` in `usb_link.c` fails the build. This is the trap the upstream `cdc_acm` sample falls into |
 | **Gating transmission on DTR** | The dongle enumerates but never answers `INFO` | Never gate on it. The app never calls `setSignals()` |
 
@@ -146,6 +169,14 @@ The generalisation: **anything derived from a running clock must be watched for 
 
 ## 8. Current state, in one line
 
-The application is at protocol v3.0 (M1, complete); the dongle firmware is still at v2.0, so **the two ends do not interoperate right now** and the app correctly refuses the link at its major-version guard. Closing that is milestone M2 (`PLAN.md` §3.1); the emulator (§3.2) is how the application is validated in the meantime, and is the reference trace to diff the firmware against when it lands. Full status is in `PLAN.md` §1.
+The application and the dongle firmware are both at protocol v3.0, the dongle is **flashed to 0.2.0 and answering on hardware**, and **the two ends have still never been connected** — because no browser has yet held the port, not because anything refuses. **The next action is V2, the app handshake.** This is **M2** (`PLAN.md` §3.1), one firmware programme in six stages; stages 0 and 1 are code-complete (§2.6), V0 is green, V1 and V3 are green on their wire half, and the emulator wire-log diff is clean (§2.7). Stages 2–5 add provisioning, the radio, and a DK remote, ending in a press on the DK scoring on the scoreboard and acknowledged back to it. Full status is `PLAN.md` §1.
 
-The embedded programme after M2 runs M3 (radio 1:1, DK as a remote) → M4 (the 2:1 link) → M5 (full-feature remote on the DK) → M6 (custom PCB) → M7 (port and validate) → M8 (custom dongle, optional), mapped onto the development phases in `PLAN.md` §3.3. **Two things about that ordering are load-bearing and look like pedantry until they bite:** M2 finishes with no radio anywhere, because the no-radio USB baseline is what makes every later radio regression attributable (§3.10); and M6 cannot open until R3, R4 and R6 have measurements, because each has a hardware contingency behind it and a board designed against a prediction is a board that gets respun.
+**Three caveats on that green, all of which look like pedantry and are not.** `HAP` is confirmed to light the LED, so `indicator.c` is alive — but `STATE` and `CFG` have only been seen to be *accepted*, which is byte-identical on the wire to a dead indicator. **The dongle has one physical bi-colour LED, not two** — two devicetree nodes, two dies, one body — so a `HAP BOTH` proves nothing about per-remote routing; address the remotes separately and read the colour. And **the COM port is exclusive**: a terminal and the app cannot both hold it, so terminal rungs and browser rungs have to be sequenced, not interleaved.
+
+After M2: M4 (the 2:1 link) → M5 (full-feature remote on the DK) → M6 (custom PCB) → M7 (port and validate) → M8 (custom dongle, optional), mapped onto the development phases in `PLAN.md` §3.3. **M3's number is retired, not reused** — it was the separate radio milestone, now absorbed into M2 — because the last renumbering left stale references and a gap costs less than that.
+
+**Three things about the ordering are load-bearing and look like pedantry until they bite:**
+
+- **The no-radio baseline is a build configuration, not a milestone.** `CONFIG_DONGLE_RADIO=n` runs the whole wire layer with the radio compiled out, and it is kept for the life of the project — that is what makes §3.10's regression list attributable, and it beats a milestone that was green once.
+- **M6 cannot open until R3, R4 and R6 have measurements.** Each has a hardware contingency behind it, and a board designed against a prediction is a board that gets respun.
+- **The radio is plain BLE at 7.5 ms, and SCI is deferred** (`PLAN.md` §4.8). The interval buys retransmission headroom rather than latency, and whether the headroom suffices depends on an unmeasured number — so the baseline is the rung needing no exotic controller feature. It also means battery sizing should carry headroom, because a later move to 2.5 ms triples connection events.

@@ -1,7 +1,7 @@
 # RefRemote — Dongle ↔ Remote Radio Protocol
 
-**Version:** 1.0
-**Link:** Bluetooth LE, nRF52840 dongle (central) ↔ two nRF52840 wrist remotes (peripherals)
+**Version:** 1.0 — amended 2026-08-10 in §12.2 and §12.3, which is deliberately not a version bump (§16.1)
+**Link:** Bluetooth LE, nRF52840 dongle (central) ↔ two nRF52840 wrist remotes (peripherals), at a **7.5 ms connection interval, baseline BLE, no SCI** (§12.2)
 **Scope:** the radio link between the dongle and the remote pair only. The wired link between the dongle and the scoreboard application is a separate protocol, specified in `PROTOCOL.md`; §13 states only what this link assumes of it.
 
 **Governing documents:** *Project Scope* v1.1 and *Functional Specification* v2.1. Where this document and those disagree, they win. Section references of the form *FS §7.3* point at the functional specification, and *WP §12* at `PROTOCOL.md`.
@@ -337,7 +337,9 @@ That is not a reason to omit it. WP §5.3 already treats a `seq` gap on 3 cm of 
 
 The remote does **not** retry `UP_INPUT`, and the dongle does not ask it to.
 
-Link-layer retransmission inside the connection event is bounded effort, and it is the right amount of effort: at a 2.5 ms interval the 25 ms one-way allocation affords roughly eight attempts (§12), which is far more than a transient fade needs. An application-level retry on top of that would only ever fire when the link-layer retries had *already* exhausted a large multiple of the budget — that is, at a moment when the press is already worthless.
+Link-layer retransmission inside the connection event is bounded effort, and it is the right amount of effort: at the 7.5 ms baseline interval the 25 ms one-way allocation affords roughly two attempts, and at 2.5 ms roughly eight (§12). An application-level retry on top of that would only ever fire when the link-layer retries had *already* exhausted the budget — that is, at a moment when the press is already worthless.
+
+Note that the argument does not depend on the rung. Fewer affordable retransmissions makes a press **more** likely to be lost outright, which is the visible, recoverable failure this design wants; it does not make a late retry any more useful.
 
 So a press that does not arrive produces no `EVT`, no `ACK`, and no tap. The referee's rule handles it, and the rule is one sentence and absolute: **no tap means the press did not land — press again.** A second press produces a second `UP_INPUT` with a new `CTR`, a genuinely new `seq`, and a correct score.
 
@@ -347,7 +349,9 @@ So a press that does not arrive produces no `EVT`, no `ACK`, and no tap. The ref
 
 The dongle assigns `seq` in the order frames arrive from the radio; the scoreboard attributes in the order it receives them (FS §7.3, WP §5.3).
 
-**Ordering is guaranteed per connection but not between them.** Two connections are two independent schedules, and a press on RED and a press on GREEN a millisecond apart may arrive at the dongle in either order depending on where each connection's next event falls. At a 2.5 ms interval the resulting attribution window is a few milliseconds wide.
+**Ordering is guaranteed per connection but not between them.** Two connections are two independent schedules, and a press on RED and a press on GREEN a millisecond apart may arrive at the dongle in either order depending on where each connection's next event falls. The attribution window is bounded by the connection interval, so it is a few milliseconds wide at 2.5 ms and roughly three times that at the 7.5 ms baseline.
+
+**Choosing rung 3 therefore widens this window**, and it is the one place where the baseline decision of §12.2 costs something real rather than merely deferring a feature. It is still small against a human pressing two buttons on opposite wrists, but it makes the R5 measurement below more pressing rather than less.
 
 This is acceptable, and it is acceptable for a specific reason rather than by assumption: the two remotes are on the two wrists of **one referee**, and a human cannot press two buttons on opposite wrists within a few milliseconds and mean them as an ordered pair. There is no officiating operation whose meaning depends on which of two near-simultaneous cross-wrist presses came first.
 
@@ -502,7 +506,7 @@ The dongle sends `DN_HOST DOWN` on app supervision expiry and `DN_HOST UP` on th
 | `rssi` | Dongle-side, HCI Read RSSI on the connection, **averaged over the last 8 connection events** | Sampled on the `LINK` re-emission tick |
 | `batt` | `UP_TELEMETRY.battery_pct`, measured by the remote | Pushed on change or every 10 s |
 
-RSSI is averaged rather than instantaneous because a single reading at a 2.5 ms interval is a sample of one hop of a frequency-hopping link, and the channel-to-channel spread in a hall with Wi-Fi present can exceed the trend the referee's operator is trying to read. An unaveraged figure would make the indicator jitter across its whole range while the link was perfectly stable, which trains the operator to ignore it — and the indicator's entire job is FS §7.4's *degradation must be visible before it is total*.
+RSSI is averaged rather than instantaneous because a single reading is a sample of one hop of a frequency-hopping link, and the channel-to-channel spread in a hall with Wi-Fi present can exceed the trend the referee's operator is trying to read. An unaveraged figure would make the indicator jitter across its whole range while the link was perfectly stable, which trains the operator to ignore it — and the indicator's entire job is FS §7.4's *degradation must be visible before it is total*.
 
 ### 9.4 Debouncing link state
 
@@ -593,7 +597,7 @@ The threat model is a crowded hall, not an adversary. It is worth being explicit
 
 | Mechanism | Setting | Why |
 |---|---|---|
-| PHY | LE 2M, both connections | Halves air time per packet, which halves the collision cross-section and is a precondition for the SCI minimum interval |
+| PHY | LE 2M, both connections | Halves air time per packet, which halves the collision cross-section. Also a precondition for the SCI intervals of §12.2, should they ever be adopted — but it earns its place on the density argument alone |
 | Frequency hopping | Adaptive, standard | The mechanism the density requirement actually rests on. 37 data channels, and the central owns the map |
 | Channel map | Adapted from QoS Conn Event Reports (`CONFIG_BT_CTLR_SDC_QOS_CONN_EVENT_REPORT`) | Persistently failing channels are removed. In a hall this will mostly mean the channels under Wi-Fi 1, 6 and 11 |
 | Map update cadence | No more than once per 30 s | A map that chases short-term interference chases noise, and each update is a link-layer procedure |
@@ -633,7 +637,9 @@ So one-way ≈ *I* + 1.7 ms with no retransmission, and each retry adds *I*:
 | 7.5 ms | ~9.2 ms | ~2 |
 | 10 ms | ~11.7 ms | ~1 |
 
-**This table is the entire argument for SCI.** At 10 ms — the interval Nordic's own multi-connection guidance lands on — a single retransmission consumes the budget and a second breaks it, so one bad connection event during a body-shadowed moment costs the referee a tap. At 2.5 ms there is room for a fade to persist across eight consecutive events before the press is lost.
+**This table is the entire argument for SCI, and it is an argument about retransmission headroom rather than about latency.** At every rung the no-retry figure is comfortably inside 25 ms; what changes is how many consecutive failed connection events the budget can absorb. At 10 ms — the interval Nordic's own multi-connection guidance lands on — a single retransmission consumes the budget and a second breaks it, so one bad connection event during a body-shadowed moment costs the referee a tap. At 2.5 ms there is room for a fade to persist across eight consecutive events before the press is lost.
+
+The headroom that matters is therefore **the retransmission rate at 12 m through a torso**, which is the one quantity in this section that cannot be derived and has never been measured. §12.2 resolves the ladder against that gap.
 
 ### 12.2 The connection-interval ladder
 
@@ -642,31 +648,51 @@ The target interval is a **firmware constant**, negotiated once during connectio
 | Rung | Interval | Mechanism | Status |
 |---|---|---|---|
 | 0 | 1.25 ms | SCI, RCV minimum | Stretch. Two connections at 1.25 ms is likely not schedulable — see below |
-| **1** | **2.5 ms** | **SCI** | **Target** |
-| 2 | 5 ms | SCI | First fallback |
-| 3 | 7.5 ms | Baseline BLE | No SCI required |
+| 1 | 2.5 ms | SCI | Deferred contingency |
+| 2 | 5 ms | SCI | Deferred contingency |
+| **3** | **7.5 ms** | **Baseline BLE, no SCI** | **Baseline. What this revision specifies and what the firmware implements** |
 | 4 | 10 ms | Baseline BLE | Nordic's multi-connection figure. The floor |
 
-Descend a rung only on a **measured** scheduling failure — dropped connection events, disconnections, or event-length overruns — never on suspicion. The rung in use is reported in a `LOG` line at connection setup so that a latency measurement can always be attributed to a known interval.
+**Rung 3 is the baseline, and SCI is deferred.** An earlier revision named rung 1 the target and treated the rest of the ladder as fallback. That inverted the burden of proof: SCI is a controller feature with a four-call enable sequence, a subrating prerequisite this design otherwise refuses, and a failure mode that is a rejected HCI command at runtime rather than a build error — paid for against a retransmission rate nobody has measured. Rung 3 needs none of it, clears the 25 ms allocation with roughly two retransmissions of headroom, and is plain Bluetooth LE that any tooling can observe.
 
-**Why rung 0 is a stretch and rung 1 is the target.** A connection event carrying one 27-byte packet pair on 2M PHY occupies roughly 0.65 ms once ramp-up and two inter-frame spaces are counted. Central scheduling requires that one timing-event of *every* active link fits inside the common interval, so two connections need roughly 1.3 ms — which does not fit inside 1.25 ms. It fits comfortably inside 2.5 ms with headroom for the ramp-up variance and for the connection-event length the SoftDevice Controller actually allocates.
+Nothing in `SCOPE.md` or `SYSTEM_FUNC_SPEC.md` specifies a connection interval. What they specify is the ~120 ms acknowledgement of FS §5.3, and rung 3 meets it.
 
-**These are estimates from documentation and arithmetic, and they have never been measured on this hardware.** They are here so that the measurement has a prediction to falsify, which is the only way a measurement of this kind means anything.
+**SCI is revisited only if body shadowing proves a real problem on shipping hardware**, measured at the dongle as deployed, with p99 rather than median, on the module and enclosure the product actually carries. Adopting it then is a deliberate change with a number behind it; adopting it now would be a prediction with complexity attached. Rungs 1 and 2 remain specified so that change has somewhere to land, and §12.3 is kept accurate against it.
 
-### 12.3 SCI configuration
+Descend to rung 4 only on a **measured** scheduling failure — dropped connection events, disconnections, or event-length overruns — never on suspicion. The interval in use is reported in a `LOG` line at connection setup so that a latency measurement can always be attributed to a known interval.
 
-The features must be enabled in the right order, and the dependency is easy to miss because the failure is a rejected HCI command rather than a build error:
+**Why rung 0 is a stretch.** A connection event carrying one 27-byte packet pair on 2M PHY occupies roughly 0.65 ms once ramp-up and two inter-frame spaces are counted. Central scheduling requires that one timing-event of *every* active link fits inside the common interval, so two connections need roughly 1.3 ms — which does not fit inside 1.25 ms. It fits comfortably inside 2.5 ms, and trivially inside 7.5 ms.
 
+**These are estimates from documentation and arithmetic, and they have never been measured on this hardware.** They are here so that the measurement has a prediction to falsify, which is the only way a measurement of this kind means anything. That they are unmeasured is precisely why the baseline is the rung that needs no special controller feature to reach.
+
+**One consequence to hold, because it runs backwards into hardware.** The interval is an input to the radio power budget and through it to battery sizing (`PLAN.md` §3.3, R6). A board sized against rung 3 and later moved to rung 1 sees roughly three times the connection events per second, so a battery sized exactly to rung 3 would need a respin. Size with headroom, and keep the interval a single named constant in one place, so the option survives without any SCI code existing.
+
+### 12.3 SCI configuration — for the deferred contingency only
+
+**Not implemented in this revision.** Rung 3 requires none of what follows. This section is retained, and corrected, so that a future adoption of SCI starts from something true rather than from a sequence that fails at runtime.
+
+The features must be enabled in the right order, and the dependency is easy to miss because the failure is a rejected HCI command rather than a build error. Verified against `nrfxlib/softdevice_controller/include/sdc.h` in the pinned NCS v3.4.0:
+
+```c
+sdc_support_extended_feature_set_central();      /* prerequisite of frame-space update and of SCI */
+sdc_support_connection_subrating_central();      /* prerequisite of SCI, not a feature we use */
+sdc_support_frame_space_update_central();        /* prerequisite of lowest_frame_space */
+sdc_support_lowest_frame_space();                /* required for the shortest intervals */
+sdc_support_shorter_connection_intervals_central();
 ```
-sdc_support_extended_feature_set()
-sdc_support_connection_subrating_central()      /* prerequisite, not a feature we use */
-sdc_support_shorter_connection_intervals_central()
-sdc_support_lowest_frame_space()                /* required for the shortest intervals */
-```
 
-The remote calls the peripheral equivalents. Both ends must call **both** the central and peripheral variants where both roles are possible.
+All of these must be called **before** `sdc_cfg_set()` and `sdc_enable()`; `sdc_support_helper()` exists to get that ordering right.
 
-Connection subrating is a **prerequisite of SCI that this protocol does not otherwise use** — subrating skips connection events, and §9.1 has already ruled that out for the same reason peripheral latency is ruled out. It is enabled because SCI mandates it, and the subrate factor is held at 1.
+**Two corrections against the previous revision of this section**, both of which would have presented as a rejected HCI command with no build-time signal:
+
+1. `sdc_support_extended_feature_set()` is **deprecated** in v3.4.0 in favour of the role-specific `sdc_support_extended_feature_set_central()` / `_peripheral()`.
+2. `sdc_support_lowest_frame_space()` requires `sdc_support_frame_space_update_central()` or `_peripheral()` to have been called, which the previous sequence **omitted entirely**. Frame Space Update in turn requires Extended Feature Set.
+
+Note also that `sdc_support_lowest_frame_space()` forces ACL connections to use the same TX and RX PHY. This protocol uses LE 2M symmetrically (§11), so the constraint costs nothing here — but it is a constraint, not a hint.
+
+**Each end calls only its own role's variants.** The dongle is central-only and the remote peripheral-only, so the dongle calls the `_central` forms and the remote the `_peripheral` forms. The header's requirement to call both is conditional on one device supporting both roles, which neither does.
+
+Connection subrating is a **prerequisite of SCI that this protocol does not otherwise use** — subrating skips connection events, and §9.1 has already ruled that out for the same reason peripheral latency is ruled out. It would be enabled because SCI mandates it, with the subrate factor held at 1.
 
 The minimum connection interval a peer will accept is read with `bt_conn_le_read_min_conn_interval()` rather than assumed. NCS v3.4.0 documents 750 µs as the nRF52 Series floor, which is below every rung on the ladder; the read exists so that a firmware mismatch between dongle and remote produces a clean fallback rather than a rejected parameter update.
 
@@ -768,9 +794,13 @@ Nordic's proprietary Low Latency Packet Mode gives a 1 ms connection interval on
 - Nordic's own multi-connection guidance moves an LLPM central with more than one connection to a 10 ms interval to avoid Link Layer scheduling conflicts that show up as dropped report rates and disconnections — and two remotes is that case.
 - SCI is a Core 6.2 feature, present in the pinned SDK for this silicon, with a documented 750 µs floor on nRF52 and a defined negotiation the peer can decline gracefully. The ladder of §12.2 degrades; LLPM either works or does not.
 
+**Both are now deferred**, since §12.2 makes rung 3 the baseline and neither mechanism is needed to reach it. The comparison stands for the day a measurement reopens the question: if sub-millisecond intervals are ever wanted, SCI is still the one to try first, and for the reasons above rather than because it was chosen once.
+
 ### 15.3 A larger MTU, or Data Length Extension
 
 Rejected, and §4.3 gives the reasoning in full: the 27-byte Link Layer payload is a precondition for the shortest connection intervals, so raising the MTU spends the latency budget to buy throughput this protocol does not need. The largest frame here is 10 bytes.
+
+At the rung 3 baseline that precondition is not binding, so the rejection rests on the simpler half of the argument: **there is nothing to carry.** A larger MTU would lengthen air time per packet — which §11 counts against the density requirement — in exchange for capacity no frame in §5 uses. It would also quietly foreclose the §12.2 contingency.
 
 ### 15.4 Application-level retry of presses
 
@@ -807,6 +837,8 @@ A major mismatch is a **refusal to operate**, not a degraded mode (§3.2). A set
 | Version | Change |
 |---|---|
 | 1.0 | Initial. Bluetooth LE, dongle central with two peripheral remotes, SCI with a fallback ladder, provisioned set key with no pairing procedure, device-local counter for gap visibility, per-frame deadlines on the downlink |
+
+**Amended 2026-08-10, and deliberately *not* a version bump.** §12.2 now makes rung 3 (7.5 ms, baseline BLE) the specified interval and defers SCI to a contingency; §12.3 is corrected against the v3.4.0 headers. By this section's own rule a changed connection-interval rung is "neither" a major nor a minor change, and the rule is right: nothing on the air moves. The frame set, the counters, the deadline mechanisms and `RR_IDENTITY` are byte-for-byte what v1.0 specified, so a v1.0 peer and an amended peer interoperate exactly as before. **A version number describes the contract, not the tuning**, and bumping it here would train the mismatch check in §3.2 to fire on changes that cannot break anything.
 
 ---
 

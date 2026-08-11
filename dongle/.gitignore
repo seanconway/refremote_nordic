@@ -1,1 +1,6 @@
 build*/
+
+# Host test binaries. The suite builds in place beside its source, and .exe is
+# the MinGW-w64 form on this machine.
+tests/**/test_protocol
+tests/**/test_protocol.exe
