@@ -3,8 +3,14 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 
-/* Board aliases: led0 = D1 (green), led1 = D2 (red). Both GPIO_ACTIVE_LOW,
- * which gpio_pin_set_dt() handles for us — 1 means "lit". */
+/* Board aliases: led0 = D1 = P0.06, led1 = D2 = P0.08. The "-green"/"-red"
+ * alias spellings this board also carries are inherited from the Nordic dongle
+ * and describe nothing here — both parts are blue, and only ONE is fitted.
+ * Measured 2026-08-11: the fitted lamp is on P0.06, i.e. the GREEN channel,
+ * which is the opposite of what Raytac's pin table says (BOARD.md §2).
+ *
+ * The GREEN/RED naming below is the REMOTE's identity, not a colour. Both nodes
+ * are GPIO_ACTIVE_LOW, which gpio_pin_set_dt() handles for us — 1 means "lit". */
 static const struct gpio_dt_spec led_green = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led_red = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 
@@ -55,9 +61,16 @@ struct blinker {
 
 static struct blinker leds[PROTO_REMOTE_COUNT];
 
-/* Not a remote's LED: fault indication borrows red, because a fault is not
+/* Not a remote's LED: fault indication borrows RED, because a fault is not
  * attributable to one wrist and the alternative is a third LED this board does
- * not have. */
+ * not have.
+ *
+ * On this board RED is the UNFITTED channel (P0.08), so every fault indication
+ * is invisible. That is kept on purpose. Moving it to the fitted lamp would put
+ * errors on the same channel as every GREEN haptic, and the ability to tell
+ * those apart is what proved per-remote routing at all (BOARD.md §2.1). Faults
+ * already leave on the wire as ERR lines, which is a richer channel than a
+ * blink; haptics have nothing else. So the one lamp goes to haptics. */
 static struct blinker *const fault_led = &leds[PROTO_REMOTE_RED];
 
 static void blinker_step(struct k_work *work)

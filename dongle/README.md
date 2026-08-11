@@ -9,7 +9,7 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 
 > **What to build is [`BUILD_SPEC.md`](BUILD_SPEC.md)** — the implementable contract for v3.0 plus the radio. This README stays the *procedure* document: layout, build, flash, manual test. Sequence and status are [`PLAN.md`](../PLAN.md) §3.1, where this is M2, one programme in six stages ending in an end-to-end demonstration; §2.6 records what stages 0 and 1 delivered.
 
-> **Before trusting this link in a match, work through the validation ladder in [`PLAN.md`](../PLAN.md) §5–§6.** V0 is green, and V1 and V3 are green on the half a terminal can reach. **Two things are still unverified and neither is a formality:** no one has watched the LEDs, so `indicator.c` has never been seen to do anything; and the application has never held the port, so V2 and V4–V6 are untouched. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
+> **Before trusting this link in a match, work through the validation ladder in [`PLAN.md`](../PLAN.md) §5–§6.** V0 is green, V1 and V3 are green on the half a terminal can reach, and the haptic downlink is confirmed to render and to route per remote ([`BOARD.md`](BOARD.md) §2.1). **The one thing still unverified is not a formality: the application has never held the port**, so V2 and V4–V6 are untouched. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
 
 ## Layout
 
@@ -20,9 +20,10 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 | `src/engine.c/.h` | Link supervision, acknowledgement routing, indicator and haptic relay, TEST modes. Owns the cooperative workqueue everything else runs on. |
 | `src/radio.h` | The seam. One interface, two build-time implementations. No code. |
 | `src/radio_null.c` | `CONFIG_DONGLE_RADIO=n`: nothing connected, downlink on the LEDs. **Permanent, not scaffolding.** |
-| `src/indicator.c/.h` | Two-LED stand-in for the remote haptics and indicators. |
+| `src/indicator.c/.h` | LED stand-in for the remote haptics and indicators. **One blue lamp for both remotes** — see [`BOARD.md`](BOARD.md) §2. |
 | `tests/protocol/` | Host unit tests for `PROTOCOL.md` §14. |
 | `tools/hostenv.sh` | Puts a **host** compiler on `PATH` for the above. Not interchangeable with `ncsenv.sh`. |
+| [`BOARD.md`](BOARD.md) | **Hardware reference** — LEDs, button, flash map, the REGOUT0 reset. Facts not derivable from the firmware. |
 
 Still to arrive, per [`BUILD_SPEC.md`](BUILD_SPEC.md) §2: `src/radio_ble.c` behind the seam (stage 3), and `../common/` carrying the radio frame codec and the provisioning record — both Zephyr-free, both shared with the remote firmware, both host-tested.
 
@@ -30,19 +31,25 @@ Still to arrive, per [`BUILD_SPEC.md`](BUILD_SPEC.md) §2: `src/radio_ble.c` beh
 
 ## Board facts worth knowing before you debug an LED
 
-The devicetree gives two LED **nodes** and one button:
+**The hardware reference is [`BOARD.md`](BOARD.md)**, cited to the in-tree board files. The short version, because it is the thing most likely to waste a session:
 
-| | GPIO | Alias |
-|---|---|---|
-| `led0_d1` | P0.06 | `led0`, `led0-green`, `green-pwm-led` |
-| `led1_d2` | P0.08 | `led1`, `led1-red`, `red-pwm-led` |
-| `button0` | P1.06 | `sw0`, `mcuboot-button0` |
+| | GPIO | Alias | Actually — **measured 2026-08-11** |
+|---|---|---|---|
+| `led0_d1` | P0.06 | `led0`, `led0-green`, `green-pwm-led` | **blue — the one lamp on the board** |
+| `led1_d2` | P0.08 | `led1`, `led1-red`, `red-pwm-led` | **not fitted; nothing visible** |
+| `button0` | P1.06 | `sw0`, `mcuboot-button0` | |
 
-**Two nodes, one physical LED.** The board carries a single bi-colour package — a green die and a red die in one body, independently drivable, in one place. Reading the two nodes as two separate lamps is the natural mistake and it will have you hunting for a second LED that does not exist. Both channels are active-low and both are available as PWM.
+**Both LEDs are blue, only one is fitted, and it is not the one the documentation says.** Raytac's pin table gives `LED0 (blue) = P0.8` and `LED1 (blue) = P0.6 (No pasted components by default)` — the two pins are transposed. `HAP GREEN LONG` blinks and `HAP RED LONG` does not, which puts the fitted part on P0.06. The `-green` and `-red` alias spellings are copied from the **Nordic** nRF52840 Dongle, which has a real RGB part; this board does not, and reasoning from those names is how this README twice claimed hardware that is not there. **Alias names are not evidence; a measurement is.**
 
-That is the entire indicator budget standing in for two remotes' worth of haptics and four RGB indicators, which is why `indicator.c` is as coarse as it is and why bench observation is not a substitute for the real surface.
+So the entire indicator budget is **one blue lamp on the `GREEN` channel**, standing in for two remotes' worth of haptics and four RGB indicators. That is why `indicator.c` is as coarse as it is, and why bench observation is not a substitute for the real surface.
 
-**The consequence that bites during testing:** because both remotes share one body, `HAP BOTH …` lights the same thing whether the routing is right or not. It is the one command that cannot tell correct per-remote addressing from a firmware that drives both channels regardless. Send `HAP RED TAP` and `HAP GREEN TAP` separately and read the colour.
+**What that one lamp can and cannot tell you:**
+
+- ✅ **Per-remote routing — and only because the other LED is missing.** `HAP RED` dark and `HAP GREEN` lit is a firmware that honours the target; one driving both channels would light the same lamp for both.
+- ❌ **Anything addressed to `RED`** — `HAP RED`, `STATE RED`, and `indicator_error()`, which borrows `RED`. **No `ERR` produces any visible signal on this board**, `APP_TIMEOUT` included. *"No blink" never means "no error"* — read the wire.
+- ❌ **`CFG`.** `indicator.c` drives GPIO, not PWM, so there is no amplitude or brightness for a scale factor to act on.
+
+[`BOARD.md`](BOARD.md) §2 has the evidence and §2.2 explains why fault indication is deliberately left invisible.
 
 ## Build
 
@@ -92,9 +99,15 @@ PING                                    → PONG
 ECHO hello                              → ECHO hello
 ACK 17                                  → tap on the remote that sent seq 17
 ACK 17 SILENT                           → the entry clears and NOTHING fires
-STATE RED SOLID 00A0FF OFF 000000       → red LED takes a steady level
-HAP BOTH LONG                           → one long pulse on both LEDs
+STATE GREEN SOLID 00FF00 OFF 000000     → the lamp takes a steady level and holds
+                                          it (blue; the RGB in the line is not
+                                          rendered). Address GREEN, not RED
+HAP GREEN LONG                          → one 500 ms pulse
+HAP RED LONG                            → nothing — RED is the unfitted pin, and
+                                          that silence is the routing proof
 CFG BOTH 50 50                          → accepted and remembered; nothing visible
+                                          here and nothing visible ever — GPIO has
+                                          no amplitude to scale
 TEST 1                                  → one EVT per button, alternating RED/GREEN
 TEST 4                                  → 32 events, 16 per remote
 TEST 0                                  → stops test mode, re-enables supervision

@@ -41,7 +41,7 @@ That configuration is what makes a radio regression attributable. `PLAN.md` §3.
 | `src/radio_null.c` | The no-radio implementation: LEDs, everything `DISCONNECTED` | No |
 | `src/radio_ble.c` | BLE central, GATT client, link state, deadline enforcement | No |
 | `src/usb_link.c/.h` | CDC-ACM, ring buffers, **and a transmit drop counter** | No |
-| `src/indicator.c/.h` | Two-LED stand-in, used by `radio_null` and by fault indication | No |
+| `src/indicator.c/.h` | LED stand-in, used by `radio_null` and by fault indication. **One fitted lamp** — [`BOARD.md`](BOARD.md) §2 | No |
 
 ### 2.1 The Zephyr-free rule, and why it is worth the discipline
 
@@ -112,7 +112,7 @@ bool radio_is_ready(enum proto_remote);
 
 ### 3.1 `radio_null`
 
-Selected by `CONFIG_DONGLE_RADIO=n`. Reports both remotes `DISCONNECTED` and never transitions. `radio_is_ready()` is always false. The four send functions render on the board's two LEDs via `indicator.c` and return 0.
+Selected by `CONFIG_DONGLE_RADIO=n`. Reports both remotes `DISCONNECTED` and never transitions. `radio_is_ready()` is always false. The four send functions render on the board's LED channels via `indicator.c` and return 0 — noting that only the `RED` channel's part is fitted on a stock board, so the render is one lamp for two remotes ([`BOARD.md`](BOARD.md) §2).
 
 **It replaces `CONFIG_DONGLE_FAKE_LINK`, which is deleted rather than defaulted off.** The fake reported synthetic `CONNECTED` with a fixed RSSI and battery so the app's indicators could be exercised. That was reasonable when no radio existed and is now a standing hazard: it fabricates exactly the values every link test is trying to measure, and it does so plausibly. `PLAN.md` §5.2 lists it as a standing trap and RP's ladder notes that it invalidates four rungs while producing entirely believable output. A Kconfig default is not protection against that — deletion is.
 
