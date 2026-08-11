@@ -20,10 +20,16 @@
 |---|---|---|
 | **M0** | USB link at v2.0, working on hardware | ✅ done — §2.1 |
 | **M1** | Scoreboard application to v3.0, the functional specification, and the design system | ✅ done — §2.3 |
-| **M2** | **Dongle USB firmware to v3.0** | ▶ next — §3.1 |
-| **M3** | Radio layer and remote firmware | protocol specified, firmware not started — §3.3 |
-| **M4** | Validation ladder and deployment validation | §5–§6 |
-| **M5** | MVP hardening — USB identity, instrumentation, ruleset library | §8 |
+| **M2** | **Dongle USB firmware to v3.0** — no radio | ▶ next — §3.1 |
+| **M3** | Radio layer brought up **1:1** — dongle central, one DK standing in as a remote | protocol specified, firmware not started — §3.4 |
+| **M4** | The **2:1** link — two peripherals, two connections, one central | §3.5 |
+| **M5** | Full-feature remote firmware on the DK — GPIO buttons, RGB indicators, ERM, nPM1300 | §3.6 |
+| **M6** | Custom remote PCB designed | §3.7 |
+| **M7** | Firmware ported to the custom remotes; system validated on production-shaped hardware | §3.8 |
+| **M8** | Custom dongle, for BOM cost — **optional** | §3.9 |
+| **M9** | Deployment validation and MVP hardening — USB identity, ruleset verification, §6 and §8 | §3.11 |
+
+**M2 through M8 are the embedded programme**, and §3.3 maps them onto the seven development phases in one table. M9 is scoreboard-and-product work that runs alongside from M5 onward rather than after M8.
 
 | Component | State |
 |---|---|
@@ -33,8 +39,10 @@
 | Scoreboard app | **v3.0, M1 complete.** 113 tests passing across protocol, reducer and service suites. Lint and production build clean. |
 | Dongle USB firmware | **Still v2.0**: framing, parser, clock, heartbeat, supervision, `CONFIRM`, TEST modes. 52 KB flash, 19 KB RAM. Milestone M2 brings it to v3.0. |
 | Dongle radio | **Not started.** `CONFIG_DONGLE_FAKE_LINK` fabricates link state; LEDs stand in for haptics. |
-| Remote firmware | **Not started.** Hardware not built. |
+| Remote firmware | **Not started.** Custom hardware not designed. The nRF52840 DK is the prototyping platform from M3 (§3.4). |
+| Provisioning | **Not started, and it is a prerequisite of M3, not of manufacture.** `RADIO_PROTOCOL.md` §10.1 specifies the record; nothing writes or reads one, and no set can connect without it — §3.4. |
 | Host parser tests | Written, **never executed** — no C compiler on the dev machine. |
+| Radio conformance tests | `RADIO_PROTOCOL.md` §14 A1–A20 exist as a specification only. **No harness.** The radio's counterpart to V0 — §5, rung W0. |
 | Validation | V1–V3 passed against v2.0 and are **void** for v3.0. V0 and V4–V8 never run, and all hardware rungs are blocked on M2. |
 
 **The two ends are deliberately out of step right now.** The app speaks v3.0 and refuses a v2.0 `HELLO` at the major-version guard, so plugging in today's dongle produces "dongle firmware is incompatible" — the correct behaviour, and the V7 guard working, but not a usable link. Nothing in the app is blocked by this: `FakeDongleTransport` exercises the full protocol surface without hardware.
@@ -129,7 +137,7 @@ The pending table shrinks in lifetime and grows in importance. The transmit ring
 
 The remotes do not exist and will not for some time, so the question of how far the USB interface can be validated without them had to be answered deliberately rather than by default. **The answer is the dongle emulator, built 2026-08-09** — the application is validated against an executable copy of the protocol before firmware exists, so a failure after M2 localises to the firmware rather than being ambiguous across the whole pipeline.
 
-An emulator on the *radio* side was considered and rejected: a laptop's own Bluetooth stack cannot hold the peripheral role with the connection parameters this design needs (SCI, LLPM — §3.3), so its timing would describe the laptop rather than the product. Radio validation needs Nordic silicon at both ends and belongs to M3, where the nRF52840 DK is already the remote-prototyping platform and most of that firmware is the remote firmware.
+An emulator on the *radio* side was considered and rejected: a laptop's own Bluetooth stack cannot hold the peripheral role with the connection parameters this design needs (SCI, LLPM — §3.4), so its timing would describe the laptop rather than the product. Radio validation needs Nordic silicon at both ends and belongs to M3, where the nRF52840 DK is already the remote-prototyping platform and most of that firmware is the remote firmware.
 
 The pieces:
 
@@ -163,11 +171,93 @@ The pieces:
 **Still to decide while M2 is in progress:**
 
 1. **Where V0 runs, permanently.** A one-off run on a borrowed machine proves the parser once; the parser is about to be rewritten and will be touched again at M3. Decide whether V0 becomes a CI job (the tests are plain C with a makefile — any Linux runner works) or a documented WSL/MSYS2 step on the dev machine, so it cannot silently return to "never executed".
-2. **What the M2 pass bar is.** Proposed: V0 green, V1–V8 pass at v3.0 with the results logged in §9.2, each rung's wire log diffed against the emulator's for the same scenario, and R1 and the app share of R2 measured. That closes every rung that does not require a radio, and leaves §3.4 as the reentry checklist when one exists.
+2. **What the M2 pass bar is.** Proposed: V0 green, V1–V8 pass at v3.0 with the results logged in §9.2, each rung's wire log diffed against the emulator's for the same scenario, and R1 and the app share of R2 measured. That closes every rung that does not require a radio, and leaves §3.10 as the reentry checklist when one exists.
 
-### 3.3 M3 — the radio layer
+### 3.3 The embedded roadmap in one view
 
-**The protocol is now designed: [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0, written 2026-08-10.** What follows is the requirement it answers to, the four architectural decisions it commits the project to, the seams in the code it attaches at, and the questions it deliberately leaves open.
+M2 through M8 are one programme with one shape: **each milestone adds exactly one new thing that can be wrong.** That is the whole reason for the ordering, and it is worth stating before the detail, because the tempting shortcuts all consist of adding two.
+
+| Phase | Milestone | What is new, and therefore what a failure means | Hardware |
+|---|---|---|---|
+| 1a | **M2** | The v3.0 message set. No radio anywhere in the system | Product dongle + host |
+| 1b | **M3** | The radio, one connection. A failure is radio or remote — never the message set, which M2 fixed | + nRF52840 DK as a remote |
+| 2 | **M3** | The remote *end* of the system: real presses, real indicator rendering, a real end-to-end loop | (same) |
+| 3 | **M4** | The **second** connection. A failure is central scheduling, routing or skew — nothing else changed | + nRF52840 dongle as remote #2 (§4.9) |
+| 4 | **M5** | The remote's real peripherals — seven buttons, RGB, an ERM, a PMIC. A failure is hardware or drivers, not protocol | + GPIO harness, ERM, nPM1300-EK |
+| 5 | **M6** | Nothing runs. This is schematic, layout, BOM and enclosure, and its **inputs are M4 and M5 measurements** | — |
+| 6 | **M7** | The custom board. A failure is the port or the board, because the firmware above it is the firmware M5 validated | Custom remote PCBs |
+| 7 | **M8** | The custom dongle. Optional, cost-driven, and deliberately last | Custom dongle |
+
+**Phase 1 as originally framed spans two milestones, and splitting it is the single most important structural point in this section.** "Dongle firmware that bridges the radio and wire protocols" is one sentence and two milestones' worth of risk: M2 changes the message set with no radio present, M3 adds the radio to a message set already proven. Bringing them up together forfeits the thing that makes M2 cheap — the emulator reference trace of §3.2, which localises any v3.0 wire defect to the firmware — and it forfeits it exactly when §3.10's list of ways the radio silently degrades the USB link becomes live. **A no-radio USB baseline that has passed V1–V8 is what makes every later radio regression attributable.** Do not merge them.
+
+**Two ordering constraints run backwards through this table**, and both are easy to miss because they look like late-phase concerns:
+
+- **M6 cannot start before R6 has a number.** Battery capacity is an enclosure and PCB decision, and the connection-interval rung chosen at M4 (`RADIO_PROTOCOL.md` §12.2) is the dominant input to radio current. Designing the board against a predicted rung means respinning it when the measurement disagrees. §3.6 makes the measurement an M5 exit criterion for this reason.
+- **M6 cannot start before R3 and R4 have an answer.** `SCOPE.md` §9.2 lists a dual-haptic hardware revision as contingent on the single-ERM assumption failing in prototyping — that contingency has to resolve while it is still a firmware-and-breadboard question, because after M6 it is a respin.
+
+### 3.4 M3 — the radio layer, brought up 1:1
+
+**The protocol is now designed: [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0, written 2026-08-10.** What follows is the scope of M3, the requirement the protocol answers to, the four architectural decisions it commits the project to, the seams in the code it attaches at, and the questions it deliberately leaves open.
+
+#### Scope: one connection, both ends, end to end
+
+M3 brings up **one** radio connection — dongle central, one nRF52840 DK standing in as a remote — and closes the loop from a physical button to the scoreboard and back to a physical indicator. The second connection is deliberately held back to M4 (§3.5), because central scheduling of two links is a distinct failure domain and mixing it into first light makes every symptom ambiguous.
+
+| # | Deliverable | Note |
+|---|---|---|
+| 1 | **Provisioning record and its reader** | `RADIO_PROTOCOL.md` §10.1. Nothing connects without it — this is the first thing built, not the last |
+| 2 | **Bench provisioning tool** | Generates a partition hex from a serial, role, address pair and key. An unlisted deliverable until now — see below |
+| 3 | Dongle BLE central: fixed-address initiator, LTK from the set key, no pairing | §10.2, §10.3. `bt_nrf_conn_set_ltk()` |
+| 4 | RefRemote Link Service on the remote: `RR_IDENTITY`, `RR_UPLINK`, `RR_DOWNLINK` | §3 |
+| 5 | Frame codec, both ends, **written without Zephyr dependencies** | So rung W0 can run on a host, exactly as `protocol.c` does. This is a constraint on how it is written, and it is free only if decided now |
+| 6 | `CTR` accounting, gap and duplicate detection, `ctr_base` re-baselining | §6, §7.2 |
+| 7 | Dongle radio seams filled: `send_evt()` fed from `UP_INPUT`, `ACK` routed by `src`, `STATE`/`CFG` relayed, `JOIN` from `UP_READY` | The seam table below |
+| 8 | Deadline enforcement mechanisms 1 and 2 | §8.3. Mechanism 3 is optional and experimental; the guarantee must not rest on it |
+| 9 | `DN_HOST`, and `LED_LINK` as the conjunction | §9.2. The case most likely to be missed (A15) |
+| 10 | Real `LINK` state, debounced, with averaged RSSI — and `CONFIG_DONGLE_FAKE_LINK=n` | §9.3, §9.4. Retiring the fake is part of the milestone |
+| 11 | **DK remote firmware**, reduced surface | Below |
+
+**The provisioning tool is real work that no document had claimed.** `RADIO_PROTOCOL.md` §10.1 says the record is "written once at manufacture", which is true of the product and unhelpful at M3, where three units need records today and will need them again after every erase. Build the **record format, the CRC check, and the refuse-to-operate-unprovisioned path (A19) for real now** — that is a boot path, and boot paths added late are boot paths that were never exercised — but generate the records with a script rather than a process. A `#define`-ed key compiled into the firmware is the tempting shortcut and it is a bad one: it makes A12, A13 and A19 untestable, and those are three of the four cases standing between this product and a cross-associated match.
+
+#### The DK as a remote: what four buttons and four LEDs can and cannot reach
+
+The nRF52840 DK offers **four buttons and four green LEDs**, one of which is also a PWM channel. The remote specifies **seven buttons and four RGB indicators** (FS §3.1, §3.2) plus an ERM. The gap is not a detail to be worked around silently; it determines what M3 can claim.
+
+Map the four buttons for **gesture and semantic coverage**, not for button coverage — three gestures and the inert/no-op distinction are the things that can be wrong, and each of the seven buttons is the same code path:
+
+| DK | Button | Reaches |
+|---|---|---|
+| Button 1 | `ADD_POINT` | `PRESS`. The scoring path, and the one repeated-press scoring rests on |
+| Button 2 | `TOGGLE_CLOCK` | `PRESS` and `HOLD` — the hold threshold at 600 ms |
+| Button 3 | `FORWARD` | `HOLD_REP` at 150 ms, the only button class that repeats |
+| Button 4 | `F1` | **Inert vs no-op** (§2.3) — `ACK … SILENT` must put *nothing at all* on the air (A20) |
+
+That covers all three gestures, the `HOLD_REP` restriction, and the distinction most likely to be flattened. The remaining three buttons (`REMOVE_POINT`, `BACKWARD`, `F2`) wait for M5, where they arrive as real GPIO.
+
+**A shift or bank modifier to reach all seven from four buttons is rejected.** It is the obvious solution and it is a second input path — the same objection §2.3 makes to an operator shortcut in the app, one layer down. It would be firmware the product does not have, exercising timing the product does not have, and it would be the only thing under test that ships nowhere.
+
+The indicators are the tighter constraint, because five things want four mono LEDs:
+
+| DK | Renders | Fidelity |
+|---|---|---|
+| LED 1 | `LED_F1` from `DN_INDICATOR` | Mode only — `OFF`/`SOLID`. **Colour is not rendered** |
+| LED 2 | `LED_F2` from `DN_INDICATOR` | Mode only |
+| LED 3 | `LED_LINK`, as the conjunction of radio-up and `DN_HOST` | Full behaviour. This is A15 and it is fully testable here |
+| LED 4 (PWM) | Haptic activity, brightness standing in for amplitude | **A proxy, and not a weak one — a false one** |
+
+**Three things M3 therefore cannot claim, and must not be read as claiming:**
+
+1. **Indicator colour.** `DN_INDICATOR` carries RGB per indicator; mono LEDs show mode only. Verify the colour fields by reading them out over RTT, and treat the rendering itself as unvalidated until M5.
+2. **`LED_PWR`.** The DK is bus-powered and has no battery, so there is nothing true for it to show. `UP_TELEMETRY.battery_pct` is synthetic until M5, which also means the app's battery indicator is being fed a constant — the same trap `CONFIG_DONGLE_FAKE_LINK` sets, wearing different clothes.
+3. **Anything haptic.** LED brightness is not amplitude. R3 and R4 — whether one ERM covers the whole range, and whether `BEAT` is reliably distinguishable from `TAP` on a wrist — are **untouched by M3 and M4** and are the substance of M5.
+
+#### Decide before starting, not during: how diagnostics get out
+
+`PLAN.md` has carried this as an open question; at M3 it becomes blocking, and the answer differs by board.
+
+The console is disabled and a second CDC-ACM instance is forbidden (§4.4), so the dongle has no diagnostic channel but protocol `LOG` and `ERR` lines. **On the DK this is a non-issue** — it has an onboard debugger, so RTT is free and costs no bootloader. **On the product dongle it is a real cost**: RTT needs the debugger partition table (`fstab-debugger.dtsi`), which means giving up the stock nRF5 bootloader on that unit, and with it the hold-button-while-plugging-in flash path that every procedure in this document assumes.
+
+The recommendation is to **keep the dongle on `LOG` lines and put RTT only on the DK**, since the dongle's traffic is already fully observable at the app end and the remote's is not observable at all. If a dongle-side RTT unit becomes necessary, dedicate *one* dongle to it permanently and label it, rather than converting and reverting the one under test — a unit whose bootloader state is uncertain is a unit whose flash procedure is uncertain. Note also that the DK can act as an SWD programmer and RTT host for an external nRF52840 through its debug-out header, **if** the target board exposes SWDIO/SWDCLK; check the MDBT50Q-CX-40 pinout before planning around it.
 
 #### What the radio has to deliver
 
@@ -230,16 +320,95 @@ Listed because they were open in the previous revision of this section and are n
 | Where do presses go that arrive while the app is disconnected? | Dropped, counted, and reported in the first `LOG` line after the app returns. Never queued — a queued press applied minutes later is a wrong score with no visible cause | §6.5 |
 | How does the remote know the difference between "radio up" and "scoreboard reachable"? | It is told, by `DN_HOST`, and renders the conjunction | §9.2 |
 
-#### Questions M3 still has to answer
+#### Questions M3 answers
 
-- Does radio work share the system workqueue (§4.6), or does the engine need its own? What jitter does the 1 Hz heartbeat tolerate, and what does the 120 ms acknowledgement budget tolerate?
-- What is the measured one-way latency at 12 m through body shadowing, at density — and what is its p99, not its median? Which rung of the §12.2 ladder does the link actually land on?
-- Is `RADIO_PROTOCOL.md` §12.2 rung 1 (2.5 ms, two connections) schedulable on this silicon at all? The arithmetic says yes with headroom and rung 0 says no; neither has been run.
-- What is the power cost of a 1 Hz downlink beat to one remote plus the connection cadence the acknowledgement budget requires, against the ten-hour target — given that peripheral latency and subrating are both ruled out (§9.1) and heartbeat density is not available as a lever (FS §11.2)?
+- Does radio work share the system workqueue (§4.6), or does the engine need its own? What jitter does the 1 Hz heartbeat tolerate, and what does the 120 ms acknowledgement budget tolerate? **Expect to need a dedicated cooperative workqueue for the engine, and measure rather than assume** (§4.6).
+- What is the one-way latency on **one** connection, on a bench, at the chosen rung — the floor that everything later is measured against?
 - Is LE Flushable ACL Data usable in v3.4.0, where it is marked experimental? The deadline guarantee does not rest on it (§8.3 mechanisms 1 and 2 must hold without it), but it is the natural mechanism if it works.
-- How do diagnostics get out during radio bring-up, given the console is disabled and a second CDC instance is forbidden (§4.4)? RTT is the obvious answer and needs the debugger partition table (`fstab-debugger.dtsi`), which means giving up the stock bootloader on the bring-up unit. **Decide before starting, not during.**
+- Does the app tolerate a real `LINK … CONNECTING` state, emitted for the first time by real hardware rather than by the emulator (`RADIO_PROTOCOL.md` §13.1)?
 
-### 3.4 How the radio can regress the USB link
+#### Questions M3 deliberately leaves to M4
+
+Listed separately because each needs the second connection to mean anything, and answering them on one connection produces a number that looks like an answer and is not:
+
+- Is `RADIO_PROTOCOL.md` §12.2 rung 1 (2.5 ms, **two** connections) schedulable on this silicon? The arithmetic says yes with headroom and rung 0 says no; neither has been run. **This is the single measurement M4 exists for**, because the rung it settles is an input to the power budget, and through that to the PCB.
+- What is the measured one-way latency at 12 m through body shadowing, at density — p99, not median?
+- What is the power cost of the connection cadence the acknowledgement budget requires, against the ten-hour target — given that peripheral latency and subrating are both ruled out (§9.1) and heartbeat density is not available as a lever (FS §11.2)?
+
+### 3.5 M4 — the 2:1 link
+
+One central, two peripherals, two connections. Everything else is unchanged from M3, which is the point: a failure here is scheduling, routing or skew.
+
+#### What M4 has to establish
+
+| # | Question | Why it needs two connections |
+|---|---|---|
+| 1 | Which rung of `RADIO_PROTOCOL.md` §12.2 the link actually lands on | Central scheduling requires every link's timing-event to fit inside the common interval. The rung is a property of the *pair*, and §12.2 predicts rung 0 fails for exactly this reason |
+| 2 | Acknowledgement routing to the correct remote (B6) | With one remote, a broadcast tap and a correctly routed tap are indistinguishable — §2.5 item 4. This is the defect the whole `src`/pending-table mechanism exists to prevent, and M3 cannot see it |
+| 3 | Cross-connection arrival skew (R5) | Ordering is guaranteed per connection and not between them (`RADIO_PROTOCOL.md` §6.4). The skew is the measurement; there is no skew with one link |
+| 4 | Downlink fan-out under load | 1 Hz beat to the owner only, plus asynchronous taps to either, plus `LINK` re-emission — B2's transmit-ring pressure is a two-remote condition |
+| 5 | Beat-on-owner-only, on real hardware | The emulator validated the app's half (§3.2). The radio half is new |
+| 6 | Density behaviour, first look | Two connections from one central is the smallest system that has an aggregate to degrade |
+
+#### The hardware decision: what plays the second remote
+
+Available: 2 × MDBT50Q-CX-40 dongles, 2 × nRF52840 dongles (PCA10059), 1 × nRF52840 DK.
+
+**Decision: the DK is remote #1; a spare nRF52840 dongle is remote #2. Do not buy a second DK, and do not have one DK emulate both remotes.** Recorded as binding in §4.9.
+
+**Why not one DK emulating two remotes.** It is achievable — Zephyr supports multiple local identities and multiple advertising sets, so one nRF52840 can hold two peripheral connections to one central. It should still be rejected, and not on grounds of effort:
+
+- **It tests the wrong scheduler.** M4 exists to find out whether *central* scheduling of two links at 2.5 ms works. Two connections terminating on one peripheral radio adds a *peripheral*-side scheduling problem that does not exist in the product, on the node whose budget the product never constrains. A rung-1 failure would be uninterpretable — peripheral contention and central contention produce the same symptom, and the product only has one of them.
+- **There is one antenna, in one place.** Cross-connection arrival skew (R5), body shadowing, spatial diversity and the 12 m link budget all require two devices in two positions. A single device cannot be shadowed from the dongle by one torso and not the other, which is the actual field condition.
+- **The firmware is thrown away and diverges.** Dual-identity peripheral firmware is not remote firmware. The code M4 validated would not be the code M5 extends, which forfeits the reason for prototyping on real silicon at all.
+
+**Why a spare dongle is sufficient, and why it does not need to be a full remote.** Remote #2's job in M4 is to hold a second connection, consume the downlink, generate uplink traffic at realistic rates, and report telemetry. It does not need seven buttons or a wrist. One button covers all three gestures, and a self-stimulus timer covers sustained load — the same trick `TEST 2` already plays on the dongle. Every question in the table above is answerable with an asymmetric pair.
+
+**Use the PCA10059 rather than the spare MDBT50Q-CX-40 for bring-up**, on a concrete difference confirmed in the board devicetree: the PCA10059 carries a green LED *and an RGB LED with all three channels on PWM*, where the MDBT50Q-CX-40 has two mono LEDs and one button (§4.2). That RGB is worth having — it is the only surface in the system before M5 that can render `DN_INDICATOR` colour at all, which is one of the three things §3.4 lists M3 as unable to claim. **Then swap in the spare MDBT50Q-CX-40 for the range and density measurements**, because those are antenna-and-module measurements and the MDBT50Q is the module the product is likely to carry. Two boards, two purposes, and the swap costs a flash.
+
+**Would a second DK be justified?** Not for M4 — nothing in the table above needs one, and the asymmetric pair answers all six. The honest case for a second DK is narrower and later: **two *haptic-capable* remotes**, for B6 as a felt experience rather than a routing assertion, B8's beat-and-tap collision, and R4's amplitude separation. Three points against buying one for that:
+
+- Those three are wrist-and-strap questions. The variables that decide them are motor mass, mounting compliance and enclosure coupling — none of which a bare DK on a bench has, and all of which the M6 board and enclosure do. A second DK would not settle them; it would produce a number that gets re-measured at M7 anyway.
+- You have one nPM1300-EK. A second haptic-capable remote means a second PMIC evaluation board and a second ERM before it means a second DK, so the DK is not even the binding purchase.
+- R4 is a *perceptual* judgement, and the single most useful instance of it is one referee wearing one well-made remote. That is an M5 experiment with one DK.
+
+So: **no second DK for M4, and probably not for M5 either.** Revisit only if the M6 spin slips far enough that two-wrist evaluation on breadboards becomes the critical path — and if that happens, price a second nPM1300-EK and ERM in the same breath, because a DK alone would not unblock it.
+
+### 3.6 M5 — the full-feature remote, on the DK
+
+The DK's GPIO carries what the DK's onboard peripherals could not: seven buttons in the FS §3.1 layout, four RGB indicators, an ERM with its driver IC, and the nPM1300-EK for charging, fuel gauging and regulation.
+
+| # | Deliverable | Answers |
+|---|---|---|
+| 1 | Seven GPIO buttons, FS §3.1 positions, debounce 15 ms | The three buttons M3 could not reach; tactile discrimination is an M6 concern |
+| 2 | Four RGB indicators, `DN_INDICATOR` rendered in **colour** | The fidelity gap §3.4 opened |
+| 3 | `LED_PWR` from a real state of charge, four-band (FS §10.1) | Retires the synthetic `battery_pct`, which is the last fake value in the system |
+| 4 | ERM + driver IC, full waveform table | `TAP`, `BEAT`, `WARN`, `BUZZ`, `LONG`, `DOUBLE`, `TRIPLE` |
+| 5 | `DN_CONFIG` scaling that **preserves the `BEAT`:`TAP` ratio** | `RADIO_PROTOCOL.md` §7.3 — an implementation scaling one shared amplitude parameter satisfies the frame and violates the requirement |
+| 6 | nPM1300 integration: charge, fuel gauge, regulator, USB-C | FS §3.4 |
+| 7 | Link-lost repeating double buzz, low-battery haptic | FS §10.2 — remote-local behaviours with no wire representation |
+
+**M5 is where R3, R4 and R6 are settled, and settling them is an exit criterion, not a nice-to-have.** §3.3 gives the reason: all three are inputs to M6, and each has a hardware contingency behind it (`SCOPE.md` §9.2 — dual-haptic revision, power-saving mode, swappable battery). A board designed while any of the three is a prediction is a board that may need respinning for a reason that was measurable first.
+
+Measure with the motor on a strap on an actual wrist, wired back to the DK. The board is large and that is fine — the motor's mounting is the variable that matters, and it is the one thing that can be made representative early.
+
+### 3.7 M6 — the custom remote PCB
+
+No firmware runs during M6. Its inputs are the M4 and M5 measurements, and its output is a board.
+
+Nothing about the hardware design is recorded anywhere in this repository yet — this section exists to say so rather than to specify it. The open items, at least: module selection (an MDBT50Q variant keeps the RF characterisation and the board target, and it is what the range measurements of M4 should be taken against); the ERM and driver IC chosen at M5, or the dual-motor contingency if R3 failed; nPM1300 as the production part; battery chemistry and capacity, sized from the R6 measurement and not from the target; the FS §3.1 button shapes and the oversized `TOGGLE_CLOCK` datum, which is a mechanical requirement before it is an electrical one; the four RGB indicators with `LED_F1`/`LED_F2` physically adjacent to their buttons; USB-C charging; the provisioning partition and APPROTECT as manufacturing steps (`RADIO_PROTOCOL.md` §10.4); and a DFU strategy for the remotes, which does not exist in any document and which §10.3 makes consequential — the argument against manufacture-time bonding was precisely that a firmware update can silently clear a settings partition.
+
+### 3.8 M7 — port and validate on custom hardware
+
+The firmware is M5's, with the board layer swapped. That is the claim the ordering buys, and M7's job is to test it rather than assume it: re-run the full radio ladder (§5.3) and the §3.10 regression list on production-shaped hardware, then the parts of §7 that only real remotes can reach — B6 on two wrists, B8's collision, R3 and R4 through the real enclosure and strap, R5 during live matches, and R6 over a full ten-hour day.
+
+This is also the first point at which a complete officiating set exists, so it is where `SCOPE.md` §8.6's field-substitution procedure and V6.5 become testable end to end with real hardware on both sides.
+
+### 3.9 M8 — a custom dongle, optional
+
+Cost-driven, deliberately last, and worth stating plainly: it changes the RF platform underneath a validated system. Everything measured at M4 and M7 about range, link budget and density is a property of the MDBT50Q module and its trace antenna, and a custom dongle re-opens all of it. If BOM cost justifies that, the re-measurement is part of the milestone, not a follow-up.
+
+### 3.10 How the radio can regress the USB link
 
 **Read this before writing radio code, not after.** The USB interface is validated in an environment with no radio. Adding one can degrade it without touching a line of USB code.
 
@@ -254,11 +423,14 @@ Listed because they were open in the previous revision of this section and are n
 | B7 | **The 120 ms budget now includes two radio hops.** This is the risk most likely to bite in a real match. | Re-measure after the radio lands. Distribution, not median. |
 | B8 | **Heartbeat contention with acknowledgement.** New at v3.0. The beat and the tap share one motor, and a four-press burst takes about a second, so they *will* collide (FS §11.1). | Confirm burst suppression in the app, and confirm amplitude separation on real hardware with a real strap. |
 
-### 3.5 M4 and M5
+### 3.11 M9 — deployment validation and MVP hardening
 
-**M4 — validation.** Work the ladder (§5) in order at v3.0, then deployment validation (§6), then the unmeasured risks (§7). The definition of done is §9.1. After the radio lands, §3.4 is re-run in full.
+Not a phase at the end of the embedded programme. **It runs alongside from M5 onward**, because most of it is scoreboard and product work with no dependency on remote hardware, and two items in it are long-lead:
 
-**M5 — MVP hardening.** The known gaps of §8 that are not closed by M2–M4: the real USB VID/PID and `requestPort()` filters, connection-error language, the Web Worker heartbeat if R1's test demands it, self-hosted fonts, and ruleset verification against the published rulebooks for the current cycle.
+- **Deployment validation** — D1–D8 (§6). D5 is blocked on a real USB VID/PID, which is a procurement and manufacturing item and should be started early rather than discovered late; D6 requires deciding the production domain before deployment, not after.
+- **MVP hardening** — the gaps of §8 that M2–M8 do not close: the real VID/PID and a matching `requestPort()` `filters:` array, connection-error language that distinguishes a policy block from a cancelled picker, the Web Worker heartbeat if R1's test demands it, self-hosted fonts, and **ruleset verification against the published rulebooks for the current cycle** — which needs a rules-literate reviewer rather than an engineer, and is therefore the item most likely to be left until it blocks a real event.
+
+The definition of done is §9.1.
 
 ---
 
@@ -304,15 +476,33 @@ The two copies were previously kept in step by a filesystem hard link. That does
 
 **`RADIO_PROTOCOL.md` is not duplicated.** It lives in this repo only, because the scoreboard never sees the radio and giving it a copy would create a second file to keep in step for no reader's benefit.
 
-### 4.8 The radio is Bluetooth LE, with the four commitments of §3.3
+### 4.8 The radio is Bluetooth LE, with the four commitments of §3.4
 
-Bearer, timing strategy, exactly-once mechanism and set binding are settled in `RADIO_PROTOCOL.md` v1.0 and summarised in §3.3. Three of them are worth restating here because each is a standing invitation to do the ordinary thing:
+Bearer, timing strategy, exactly-once mechanism and set binding are settled in `RADIO_PROTOCOL.md` v1.0 and summarised in §3.4. Three of them are worth restating here because each is a standing invitation to do the ordinary thing:
 
 - **Do not raise the ATT MTU or enable Data Length Extension.** The 27-byte Link Layer payload is a *precondition* for the shortest connection intervals (`RADIO_PROTOCOL.md` §4.3). Raising it is a normal, sensible optimisation that would spend the latency budget to buy throughput this product does not need, and it would not fail a single test — it would lengthen the acknowledgement tail by milliseconds nobody attributes to it.
 - **Do not enable peripheral latency or connection subrating.** They are the standard BLE power levers and they work by skipping connection events, which is exactly what delays an acknowledgement tap (§9.1). Subrating is enabled only because SCI mandates it, with the subrate factor held at 1.
 - **Do not add an application-level retry to the press path.** Link-layer retransmission inside the connection event is the bounded effort this design wants. Anything above it fires only when the press is already worthless, and delivers the late tap `PROTOCOL.md` §11 rules out (§6.3).
 
 Each of these is the thing a competent implementer following ordinary practice would do, and each fails silently.
+
+### 4.9 The 2:1 link is tested with two physical peripherals, asymmetric
+
+**One nRF52840 DK as remote #1, one spare nRF52840 dongle as remote #2.** Not one DK holding two connections, and not a second DK. The full argument is in §3.5; the decision is recorded here because the rejected option is the cheaper-looking one and will look attractive again.
+
+The load-bearing part is the first reason rather than the practical ones: M4 exists to measure **central** scheduling of two links, and terminating both on one peripheral radio introduces a peripheral-side scheduling constraint the product does not have. A rung-1 failure measured that way cannot be attributed, and an unattributable failure at M4 propagates into the power budget and from there into the M6 board.
+
+The second remote is deliberately not a full remote. It holds a connection, consumes the downlink, generates uplink load, and reports telemetry — which is the entire set of things a second connection must do for §3.5's six questions to be answerable.
+
+**Use the PCA10059 for bring-up and the spare MDBT50Q-CX-40 for range and density**, because the second measurement is a property of the module and antenna and the first is not. Swapping is a flash.
+
+### 4.10 Provisioning is built for real at M3, with a bench tool rather than a process
+
+`RADIO_PROTOCOL.md` §10.1 describes a record written once at manufacture. At M3 that reads as permission to defer it, and it is not.
+
+**Built at M3:** the record format, the CRC check, the LTK installation from the provisioned key, and the refuse-to-operate-unprovisioned path (A19). **Deferred:** the manufacturing process around it — a script generating a partition hex is sufficient and correct for three units.
+
+A key compiled into the firmware as a `#define` would be faster and would make A12 (no key), A13 (set mismatch) and A19 (unprovisioned) untestable. Those three are most of what stands between this product and a cross-associated match at a multi-mat event, and FS §2.3 calls that a scoring-integrity failure rather than an inconvenience. A boot path added after the fact is also a boot path nothing ever exercised.
 
 ---
 
@@ -321,6 +511,8 @@ Each of these is the thing a competent implementer following ordinary practice w
 **Work the rungs in order.** Each isolates one failure domain, and a failure high up is uninterpretable if a lower rung was skipped. Record the date and firmware version against each result in §9.2.
 
 The interface "works" in the sense that a happy path completed once. That is a much weaker claim than "reliable", and the gap between them is where this class of system fails: at hour three, on a cable pull, on a backgrounded tab, on someone else's laptop.
+
+**There are two ladders.** V0–V8 test the USB link and belong to M2; W0–W8 (§5.3) test the radio and are worked across M3, M4 and M7. They are separate because they isolate different domains, and the V ladder must be green **before** the radio exists — that no-radio baseline is what makes §3.10's regression list attributable rather than a list of suspicions.
 
 **V1–V3 passed against protocol v2.0 and are void.** The message set they exercised no longer exists. They are cheap to re-run and must be, after M2.
 
@@ -452,6 +644,30 @@ Revert afterwards. This is cheap and it is the only mechanism protecting against
 
 **Instrumentation — closed at M1.** The v2.0 app logged gaps as one-off warnings into a ring buffer that would have rolled over long before anyone read it, which made V8 unfalsifiable. Running counters now exist (§2.3), with a JSON diagnostics export from the detail panel. **Export at the start of the soak as well as the end** — the counters are cumulative and monotonic, so a single reading at the end cannot distinguish a fault at hour one from a fault at hour four.
 
+### 5.3 The radio ladder — **NOT RUN, NOT WRITTEN**
+
+The counterpart to §5.1–§5.2, for `RADIO_PROTOCOL.md`. Every rung is new and none has ever been executed. The `A`-references are the conformance cases of `RADIO_PROTOCOL.md` §14; the `B`- and `R`-references are §3.10 and §7.
+
+**W0–W5 are M3 (one connection). W6–W7 are M4 (two). W8 is worked at M4 and re-run in full at M7.**
+
+| Rung | Milestone | What it isolates | Pass |
+|---|---|---|---|
+| **W0** | M3 | **Frame codec, on a host, no hardware** | A1–A7, A11, A20 green. The radio's V0, and it exists only if the codec is written without Zephyr dependencies (§3.4 deliverable 5) |
+| **W1** | M3 | **Association and security.** One connection, encrypted from the provisioned key, no pairing procedure performed | `RR_IDENTITY` read and validated, CCCD subscribed, `LINK … CONNECTED` with a real RSSI. Negative cases are the point: A12 no key, A13 set mismatch, A14 proto major, A19 unprovisioned. **A pass on the positive case alone is not a pass** |
+| **W2** | M3 | **Uplink.** Button → `UP_INPUT` → `EVT` → scoreboard | All three gestures on the four DK buttons (§3.4); 600 ms hold and 150 ms repeat measured, not assumed; A4 duplicate, A5 gap, A6 wrap |
+| **W3** | M3 | **Downlink.** `STATE` → `DN_INDICATOR`, `HAP` → waveform, `CFG` → scaling | Indicators assert idempotently (A11); **`ACK … SILENT` puts nothing on the air** (A20) — verify by frame count, not by watching an LED that was never going to light |
+| **W4** | M3 | **Round trip and the deadline rule** | `EVT`→`ACK`→render measured as a distribution. A8 a late `ACK` is not sent at all, A9 a second `ACK` replaces rather than queues, A10 a `BEAT` never truncates a `TAP`. `taps_dropped_late` non-zero when provoked and zero when not |
+| **W5** | M3 | **Link state, in all four supervision relationships** (`RADIO_PROTOCOL.md` §9.1) | **A15 is the rung** — app supervision expires, radio stays up, both remotes render link-lost. Also A16 boot-is-DOWN, A17 sub-2 s reconnect emits no `DISCONNECTED`, A18 press out of range, A7 reboot re-baselines with no false gap, and §9.4 debounce under repeated power-cycling at the range edge (B4) |
+| **W6** | **M4** | **Two connections.** The rung M4 exists for | Which §12.2 rung is schedulable — reported in the setup `LOG` line so every later latency figure is attributable. **B6: taps land on the originating remote only.** R5: cross-connection arrival skew measured. Beat on the owner only, from real hardware. B2 with the transmit-ring drop counter already instrumented |
+| **W7** | **M4** | **Range, link budget and density**, at the dongle **as deployed** | 12 m with body shadowing, dongle in a laptop port below table height — not a bench with line of sight. p99, not median. Whatever density can be synthesised. **Take this rung with the MDBT50Q-CX-40 as remote #2** (§4.9). Escalation order if it does not close is fixed: USB extension cable, then a placement constraint in the documentation, then transmit power |
+| **W8** | M4, re-run M7 | **Radio soak, and the §3.10 regression list in full** | ≥4 h with both remotes connected and pressing. `radio_gap` and `radio_dup` accounted for rather than merely observed; no transmit-ring drops beyond `BEAT`; B1 workqueue contention re-measured with the radio live; V4 and V5 re-run underneath it |
+
+**Three traps specific to this ladder**, in the spirit of §5.2:
+
+- **`CONFIG_DONGLE_FAKE_LINK=y` invalidates W1, W5, W6 and W7 completely** and does so while producing entirely plausible output. Retiring it is an M3 deliverable (§3.4 item 10), and confirming `INFO` reports `DISCONNECTED` with no remotes powered is the check that it is gone (B3).
+- **A synthetic `battery_pct` from the DK invalidates anything about the battery indicator**, for exactly the same reason and with none of the visibility — there is no Kconfig symbol to notice. It is real only from M5.
+- **A one-connection latency figure is not a two-connection latency figure**, and the difference is the whole substance of the §12.2 ladder. Do not carry a W4 number forward past W6.
+
 ---
 
 ## 6. Deployment validation — **NOT RUN**
@@ -528,6 +744,10 @@ Measure average current attributable to the radio at the connection cadence the 
 | **Firmware still at v2.0** | The two ends do not interoperate. Every hardware rung is blocked. M2 |
 | Radio protocol specified, implemented nowhere | `RADIO_PROTOCOL.md` v1.0 has no implementation on either side and no conformance suite. Its §14 cases are the counterpart to `PROTOCOL.md` §14 and, like V0, will be trusted on inspection until something runs them. M3 |
 | Every latency figure in `RADIO_PROTOCOL.md` §12 is arithmetic | The connection-interval ladder, the retransmission counts and the 2.5 ms target are predictions from documentation. They have never been near this hardware. R2 |
+| **No provisioning record, reader, or tool** | Nothing can connect without one, so this is the first M3 deliverable rather than a manufacturing concern — §4.10. The tool is work no document had claimed |
+| **No radio conformance harness** | A1–A20 have the same status V0 had: written, never run. Rung W0, and it is only cheap if the frame codec is written free of Zephyr dependencies from the start (§3.4) |
+| **No DFU strategy for the remotes** | Absent from every document, and `RADIO_PROTOCOL.md` §10.3 makes it consequential — the case against manufacture-time bonding was that a firmware update can silently clear a settings partition. Decide at M6, at the latest |
+| **No hardware design work of any kind** | Module, ERM and driver, PMIC production part, battery sizing, button mechanics, enclosure, APPROTECT. M6, and its inputs are M4 and M5 measurements — §3.3 |
 | Host parser tests never executed | The firmware parser is trusted on inspection alone, and M2 rewrites it. Highest-value outstanding item; needs only a machine with a C compiler |
 | V4–V8 never run | Supervision, reconnect and soak behaviour unverified |
 | Rulesets not verified against current rulebooks | The library is written and the schema is right, but the **numbers have not been checked against the published rules for the current cycle**. They are implementation-accurate, not authoritative. This must happen before any real match and again at each rules cycle |
@@ -549,13 +769,16 @@ Measure average current attributable to the radio at the connection cadence the 
 - [x] Application at v3.0, tested and browser-verified (M1)
 - [x] Soak instrumentation exists — counters and diagnostics export
 - [ ] V0 green on a machine with a C compiler, and a decision on where it runs permanently (§3.2)
-- [ ] V1–V8 pass at v3.0, recorded in §9.2 with dates and firmware version
-- [ ] R1–R6 measured, with mitigations applied where they fail
+- [ ] V1–V8 pass at v3.0, recorded in §9.2 with dates and firmware version — **before any radio code exists**
+- [ ] W0 green, and W1–W5 pass on one connection (M3)
+- [ ] W6–W7 pass on two, with the §12.2 rung in use recorded against every latency figure (M4)
+- [ ] R1–R6 measured, with mitigations applied where they fail — **R3, R4 and R6 before M6 opens** (§3.3)
 - [ ] D1–D8 pass; real VID/PID assigned and `requestPort()` filtered
 - [ ] V8 clean for ≥4 h with zero sequence gaps and zero applied duplicates, using real instrumentation
+- [ ] W8 clean for ≥4 h with both remotes connected, `radio_gap` and `radio_dup` accounted for
 - [ ] Every ruleset in the library checked against the published rulebook for the current cycle
-- [ ] §3.4 re-run in full after the radio lands
-- [ ] `PROTOCOL.md` amended for any further constraint that proves real
+- [ ] §3.10 re-run in full after the radio lands, and again at M7 on custom hardware
+- [ ] `PROTOCOL.md` amended for any further constraint that proves real; `RADIO_PROTOCOL.md` likewise, and its §12 predictions replaced by measurements
 
 ### 9.2 Results log
 
@@ -576,5 +799,6 @@ Measure average current attributable to the radio at the connection cadence the 
 | 2026-08-07 | **M0**: dongle USB firmware 0.1.0 working on hardware at v2.0; V1–V3 passed |
 | 2026-08-09 | `SCOPE.md` v1.1 and `SYSTEM_FUNC_SPEC.md` v2.1 adopted as authoritative; `PROTOCOL.md` v3.0 written against them (breaking) |
 | 2026-08-09 | **M1**: scoreboard application at v3.0 — 113 tests, lint and build clean, browser-verified |
-| 2026-08-10 | `RADIO_PROTOCOL.md` v1.0 written against `SCOPE.md`, `SYSTEM_FUNC_SPEC.md` and `PROTOCOL.md` §12. Bluetooth LE as bearer, SCI with a fallback ladder, a device-local counter for gap visibility with no application-level retry, and a provisioned set key with no pairing procedure ever. Settles the M3 architecture; measures nothing — §3.3, §4.8 |
+| 2026-08-10 | `RADIO_PROTOCOL.md` v1.0 written against `SCOPE.md`, `SYSTEM_FUNC_SPEC.md` and `PROTOCOL.md` §12. Bluetooth LE as bearer, SCI with a fallback ladder, a device-local counter for gap visibility with no application-level retry, and a provisioned set key with no pairing procedure ever. Settles the M3 architecture; measures nothing — §3.4, §4.8 |
+| 2026-08-10 | **Embedded roadmap restructured.** The single M3 "radio layer and remote firmware" was carrying seven phases' worth of work; it is now M3 (radio 1:1) → M4 (2:1) → M5 (full-feature DK remote) → M6 (PCB) → M7 (port and validate) → M8 (custom dongle, optional), with validation and hardening moved to M9 and run alongside. Added the radio validation ladder W0–W8 (§5.3), which did not exist. **The old M4 and M5 numbers are now M9** — a reference to "M4 — validation" predates this change. Decisions §4.9 (2:1 test topology) and §4.10 (provisioning at M3) recorded — §3.3 |
 | 2026-08-09 | Dongle emulator built (`wrsl-app/src/emulator/`): the dongle half of v3.0 over real Web Serial, with interactive mockups of both remotes. Settles how the interface is validated before firmware — §3.2. Suite now 137 tests. Verified end to end over a virtual serial pair: handshake, indicator assertion per remote, acknowledgement routing, and the gesture axis |

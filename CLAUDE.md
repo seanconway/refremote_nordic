@@ -14,7 +14,7 @@ Each document has one job. Read in this order; later documents answer to earlier
 | `SYSTEM_FUNC_SPEC.md` | How the system behaves | **Authoritative on behaviour.** Cited as "FS §n" |
 | `PROTOCOL.md` | The dongle ↔ scoreboard wire contract | Answers to both of the above. Byte-identical in both repos |
 | `RADIO_PROTOCOL.md` | The dongle ↔ remote radio contract. The counterpart to `PROTOCOL.md`, and `PROTOCOL.md` §12 is its acceptance criteria | Answers to both of the above. **This repo only** — the app never sees the radio |
-| `PLAN.md` | **The living status document**: current state (§1), completed work (§2), planned work (§3), binding decisions (§4), the validation ladder (§5–§6), risks and gaps (§7–§8), results log and version history (§9) | Answers to all of the above |
+| `PLAN.md` | **The living status document**: current state (§1), completed work (§2), planned work and the embedded roadmap (§3, with §3.3 mapping the milestones onto the development phases), binding decisions (§4), the two validation ladders — USB V0–V8 and radio W0–W8 (§5–§6), risks and gaps (§7–§8), results log and version history (§9) | Answers to all of the above |
 | `README.md` (this repo) | Overview of the **embedded domain**: system composition, hardware, the stateless-remote architecture, layout | Orientation |
 | `dongle/README.md` | The **dongle firmware** specifically: layout, build, flash, manual test, configuration | Orientation and procedure |
 | `wrsl-app/README.md` | The **web application**: responsibilities, architecture, design system, host requirements, deployment | Orientation |
@@ -147,3 +147,5 @@ The generalisation: **anything derived from a running clock must be watched for 
 ## 8. Current state, in one line
 
 The application is at protocol v3.0 (M1, complete); the dongle firmware is still at v2.0, so **the two ends do not interoperate right now** and the app correctly refuses the link at its major-version guard. Closing that is milestone M2 (`PLAN.md` §3.1); the emulator (§3.2) is how the application is validated in the meantime, and is the reference trace to diff the firmware against when it lands. Full status is in `PLAN.md` §1.
+
+The embedded programme after M2 runs M3 (radio 1:1, DK as a remote) → M4 (the 2:1 link) → M5 (full-feature remote on the DK) → M6 (custom PCB) → M7 (port and validate) → M8 (custom dongle, optional), mapped onto the development phases in `PLAN.md` §3.3. **Two things about that ordering are load-bearing and look like pedantry until they bite:** M2 finishes with no radio anywhere, because the no-radio USB baseline is what makes every later radio regression attributable (§3.10); and M6 cannot open until R3, R4 and R6 have measurements, because each has a hardware contingency behind it and a board designed against a prediction is a board that gets respun.

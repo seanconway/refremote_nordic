@@ -7,7 +7,7 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) over USB CDC-ACM. 
 
 > **This firmware currently implements protocol v2.0.** `PROTOCOL.md` is at **v3.0**, a breaking revision written against `SYSTEM_FUNC_SPEC.md`. Bringing this firmware up to it is milestone M2 in [`PLAN.md`](../PLAN.md) §3.1. A v2.0 dongle and a v3.0 app will refuse each other at the `HELLO` version check, which is the intended behaviour.
 
-> **Before trusting this link in a match, work through the validation ladder in [`PLAN.md`](../PLAN.md) §5–§6.** The interface is functionally working but not validated: the host parser tests have never been executed, and the supervision, reconnect and soak rungs are untouched. `PLAN.md` §3.4 lists the ways adding the radio layer can regress this link without touching any USB code.
+> **Before trusting this link in a match, work through the validation ladder in [`PLAN.md`](../PLAN.md) §5–§6.** The interface is functionally working but not validated: the host parser tests have never been executed, and the supervision, reconnect and soak rungs are untouched. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
 
 ## Layout
 
