@@ -11,7 +11,7 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 
 > **The no-radio baseline (V0–V6) is closed.** The application has held the port repeatedly, the handshake, the reverse path, supervision/disconnection, and reconnect all check out on hardware. A few rows are carried forward rather than chased — burst suppression, the remote-render half of supervision, a scripted 10× reconnect, and a dongle-swap test — each needs either hardware that doesn't exist yet or scripting rather than manual observation; see `PLAN.md` §5, §9.2. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
 
-> **Stage 2 (provisioning) is closed, confirmed on hardware 2026-08-12** — `BUILD_SPEC.md` §9. Unprovisioned, `INFO` reports the `RR-0000` fallback; with a `provision.py` record written to `storage_partition`, it reports the provisioned serial exactly, and that survives an application reflash unchanged. **Writing the record needs a specific procedure** — nRF Connect Programmer's GUI cannot do it (times out merging the app and provisioning hex into one transfer, and its DFU packaging has no "no SoftDevice" option); use the `nrfutil nrf5sdk-tools` CLI with `--sd-req=0x00` instead, per `BUILD_SPEC.md` §9.
+> **Provisioning redesigned 2026-08-12** — `BUILD_SPEC.md` §9, `PLAN.md` §4.13. The original flash-partition design (`storage_partition`, written over DFU as a separate step) turned out to be unreachable on this bootloader — Serial DFU always activates into the application slot regardless of the address a hex file claims, and this board has no SWD probe on the bench to write `storage_partition` directly. Identity is now baked into the firmware image at build time instead: `tools/provision.py` generates `provisioning_data.h`, and `west build` refuses to configure without `-DCONFIG_PROVISIONING_HEADER_DIR=<dir>` pointing at one. **Not yet confirmed on hardware** under this mechanism.
 
 ## Layout
 
@@ -23,11 +23,10 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 | `src/radio.h` | The seam. One interface, two build-time implementations. No code. |
 | `src/radio_null.c` | `CONFIG_DONGLE_RADIO=n`: nothing connected, downlink on the LEDs. **Permanent, not scaffolding.** |
 | `src/indicator.c/.h` | LED stand-in for the remote haptics and indicators. **One blue lamp for both remotes** — see [`BOARD.md`](BOARD.md) §2. |
-| `src/provisioning_flash.c/.h` | Stage 2. Reads `storage_partition`, hands the raw bytes to `../common/provisioning.c`. The only Zephyr-specific part of provisioning. |
-| `../common/provisioning.h/.c` | The provisioning record — struct, CRC32, validation. **No Zephyr dependencies**, host-tested, shared unchanged with the remote firmware once it exists. |
+| `../common/provisioning.h/.c` | The provisioning record — struct, `provisioning_validate()`. **No Zephyr dependencies**, host-tested, shared unchanged with the remote firmware. Baked into the image at build time, not read from flash — §9, `PLAN.md` §4.13. |
 | `tests/protocol/` | Host unit tests for `PROTOCOL.md` §14. |
-| `tests/provisioning/` | Host unit tests for `../common/provisioning.c` — 54 checks. |
-| `tools/provision.py` | Bench tool: generates a set's three provisioning records (dongle, RED, GREEN) as Intel HEX plus a manifest. No dependencies. |
+| `tests/provisioning/` | Host unit tests for `../common/provisioning.c` — 9 checks. |
+| `tools/provision.py` | Bench tool: generates a set's three `provisioning_data.h` headers (dongle, RED, GREEN) as generated C, plus a manifest. No dependencies. |
 | `tools/hostenv.sh` | Puts a **host** compiler on `PATH` for the above. Not interchangeable with `ncsenv.sh`. |
 | [`BOARD.md`](BOARD.md) | **Hardware reference** — LEDs, button, flash map, the REGOUT0 reset. Facts not derivable from the firmware. |
 
@@ -61,10 +60,21 @@ So the entire indicator budget is **one blue lamp on the `GREEN` channel**, stan
 
 From the nRF Connect VS Code extension (already configured), or on the CLI:
 
+**Every build needs a provisioning header** (§9, `PLAN.md` §4.13) — generate one first:
+
+```bash
+python dongle/tools/provision.py RR-0001 -o dongle/tools/out/
+```
+
+Then build, pointing at the role you need:
+
 ```bash
 source dongle/tools/ncsenv.sh   # reconstructs the NCS v3.4.0 environment
-west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build
+west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build \
+    -- -DCONFIG_PROVISIONING_HEADER_DIR="<abs path>/dongle/tools/out/RR-0001_dongle"
 ```
+
+`CONFIG_PROVISIONING_HEADER_DIR` must be quoted — it's a Kconfig string, not a plain CMake variable, for the reason in `BUILD_SPEC.md` §9. `west build` refuses to configure at all without it.
 
 Output: `dongle/build/dongle/zephyr/zephyr.hex`
 

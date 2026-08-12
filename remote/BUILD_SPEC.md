@@ -68,8 +68,7 @@ Consequence: `led0`'s `gpio-leds` node is **not used**. The haptic proxy drives 
 | File | Owns | Zephyr-free |
 |---|---|---|
 | `../common/rframe.c/.h` | RP v1.0 frame codec, both directions, `CTR` arithmetic | **Yes — enforced** |
-| `../common/provisioning.c/.h` | Record layout, CRC32, field accessors | **Yes — enforced** |
-| `src/prov_flash.c` | Reads the provisioning partition | No — thin shim |
+| `../common/provisioning.c/.h` | Record layout, `provisioning_validate()` | **Yes — enforced** |
 | `src/link.c` | BLE peripheral, advertising, the RefRemote Link Service, uplink `CTR` | No |
 | `src/buttons.c` | Debounce and gesture classification | No |
 | `src/haptic.c` | Waveform table, `ttl` check, PWM rendering | No |
@@ -289,11 +288,13 @@ This is the same trap `CONFIG_DONGLE_FAKE_LINK` set on the dongle, wearing diffe
 
 ## 9. Provisioning
 
-Identical mechanism to the dongle, sharing `common/provisioning.c`. Record per RP §10.1, 55 bytes, CRC32-checked, in **`storage_partition`** — `0xf8000`, 32 KB on this board, against `0xf0000`, 16 KB on the dongle. Both are reachable as `FIXED_PARTITION_ID(storage_partition)`, so the reader code is identical and the difference stays in devicetree where it belongs.
+**Redesigned 2026-08-12 — same mechanism as the dongle, sharing `common/provisioning.c`; PLAN.md §4.13 has the full reasoning.** Identity is baked into the firmware image at build time: `dongle/tools/provision.py` generates `provisioning_data.h` for each role, and `west build` refuses to configure without one (`CONFIG_PROVISIONING_HEADER_DIR`, a required Kconfig string — see `dongle/BUILD_SPEC.md` §9 for why this has to be a Kconfig option and not a plain CMake `-D`, and why it must be quoted).
+
+This DK has its own working `storage_partition` reachable via SWD (the onboard debugger makes it a non-issue here), but the dongle's sealed enclosure and DFU-only access do not, and the two boards use one shared design rather than two — §4.13's decision was to keep dongle and remote symmetric.
 
 A remote's record carries the dongle in `peer_addr[0]` and a zero slot in `peer_addr[1]`.
 
-**On CRC failure or absence: do not advertise, render an unmistakable fault indication, and stop** (A19). There is no safe default for *which set am I in*, and a unit that guesses is a unit that can join a neighbouring match.
+**On failure: do not advertise, render an unmistakable fault indication, and stop** (A19) — kept at two points. `CMakeLists.txt` refuses to configure at all without a real `provisioning_data.h`; `main.c` still calls `provisioning_validate(&PROV_RECORD)` before doing anything else, the same place `prov_flash_load()` used to be called, catching a header that exists but is wrong rather than absent. There is no safe default for *which set am I in*, and a unit that guesses is a unit that can join a neighbouring match.
 
 **No pairing procedure is ever performed.** Both ends install the provisioned `set_key` as the LTK via `bt_nrf_conn_set_ltk()`. Pairing requests are rejected in both directions, the device is not bondable, and there is no bond store — therefore nothing a firmware update or a settings-schema change can silently clear. That was the whole argument against bonding at manufacture: a set that has forgotten its binding presents at an event as two remotes that will not connect, with no diagnostic.
 
@@ -317,7 +318,7 @@ Rung names are `PLAN.md`'s.
 | Stage | Green when |
 |---|---|
 | **3** | ◐ **Code-complete 2026-08-12** — `common/rframe.c/.h` shared with the dongle build, host suite written (`dongle/tests/rframe`, 20 checks) but not run (host toolchain blocked in this environment, cross-checked independently instead — `PLAN.md` §9.2/§9.3). **W0** — codec cases A1–A7, A11, A20 green on the host, with no board involved. **W1** — one connection, encrypted from the provisioned key, `RR_IDENTITY` read and validated, CCCD subscribed, and the negatives A12, A13, A14, A19. A pass on the positive case alone is not a pass — none of this run on hardware yet |
-| **4** | ◐ **Code-complete 2026-08-12** — `src/link.c`, `buttons.c`, `haptic.c`, `indicators.c`, `prov_flash.c`, `main.c` all written, building clean against `nrf52840dk/nrf52840`. **W2** uplink — all three gestures, with 600 ms and 150 ms **measured, not assumed**; A4, A5, A6. **W3** downlink — idempotent indicators (A11), and **A20 verified by counting frames**, not by watching an LED that was never going to light. **W4** round trip — A8, A9, A10, and `taps_dropped_late` non-zero when provoked and zero when not. **W5** link state — **A15**, A16, A17, A18, A7 — all still to be run on hardware |
+| **4** | ◐ **Code-complete 2026-08-12** — `src/link.c`, `buttons.c`, `haptic.c`, `indicators.c`, `main.c` all written, building clean against `nrf52840dk/nrf52840` with a generated `provisioning_data.h` (§9, PLAN.md §4.13). **W2** uplink — all three gestures, with 600 ms and 150 ms **measured, not assumed**; A4, A5, A6. **W3** downlink — idempotent indicators (A11), and **A20 verified by counting frames**, not by watching an LED that was never going to light. **W4** round trip — A8, A9, A10, and `taps_dropped_late` non-zero when provoked and zero when not. **W5** link state — **A15**, A16, A17, A18, A7 — all still to be run on hardware |
 | **5** | Second peripheral, range, density, soak |
 
 **The demonstration that closes Stage 4:** press Button 1 on the DK → `UP_INPUT` → `EVT` → the scoreboard scores → `ACK` → `DN_HAPTIC TAP` → LED 1 pulses on that DK, and on that DK only.

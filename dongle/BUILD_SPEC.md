@@ -34,8 +34,7 @@ That configuration is what makes a radio regression attributable. `PLAN.md` §3.
 |---|---|---|
 | `src/protocol.c/.h` | WP v3.0 line assembler, parser, encoders | **Yes — enforced** |
 | `../common/rframe.c/.h` | RP v1.0 frame codec, both directions, `CTR` arithmetic | **Yes — enforced** |
-| `../common/provisioning.c/.h` | Record layout, CRC32, field accessors | **Yes — enforced** |
-| `src/prov_flash.c` | Reads the provisioning partition and hands bytes to `provisioning.c` | No — thin shim |
+| `../common/provisioning.c/.h` | Record layout, `provisioning_validate()` | **Yes — enforced** |
 | `src/engine.c/.h` | All protocol state; the sole producer on the transmit path |  No |
 | `src/radio.h` | The seam. No implementation | — |
 | `src/radio_null.c` | The no-radio implementation: LEDs, everything `DISCONNECTED` | No |
@@ -49,7 +48,7 @@ That configuration is what makes a radio regression attributable. `PLAN.md` §3.
 
 `protocol.c` already honours this and it is why a host test suite for the wire parser can exist at all. **`rframe.c` must be written the same way from the first line** — retrofitting it later means unpicking Zephyr types from a codec, which nobody does, so the radio simply never gets a host suite. It is free only if decided now.
 
-`provisioning.c` is included because the CRC check and the field validation are exactly the logic that must not be wrong, and they are pure. Only the flash read is platform-bound, and it is isolated in `prov_flash.c` for that reason.
+`provisioning.c` is included because `provisioning_validate()`'s field checks are exactly the logic that must not be wrong, and they are pure — there is no platform-bound half to isolate any more, since the record is a compile-time constant rather than something read from flash (§9, PLAN.md §4.13).
 
 Both host suites live outside the Zephyr build: `tests/protocol/` and `../tests/rframe/`, plain `gcc` and a makefile.
 
@@ -439,39 +438,28 @@ Emitted as a `LOG` line on handshake, together with the connection interval in u
 
 ## 9. Provisioning
 
-Built for real at Stage 2, with a bench tool rather than a manufacturing process. **Code-complete 2026-08-12.**
+**Redesigned 2026-08-12 — PLAN.md §4.13 reverses §4.10's original "bench tool writes a flash partition" design.** Identity is baked into the firmware image at build time instead: `dongle/tools/provision.py` generates a small C header, `provisioning_data.h`, containing a `static const struct provisioning_record PROV_RECORD` literal, and `west build` refuses to configure without one.
 
-Record per RP §10.1, 55 bytes: `magic`, `version`, `set_serial[12]`, `role`, `own_addr[6]`, `peer_addr[2][6]`, `set_key[16]`, `crc32`. Stored in **`storage_partition` — 16 KB at `0xf0000`** on this board, which sits below the nRF5 bootloader and survives an application reflash, so a re-flashed dongle does not need re-provisioning.
+**Why the reversal.** The original design wrote a 55-byte record to `storage_partition` (16 KB at `0xf0000`) as a separate step, over Serial DFU, after the application was already flashed. Attempting this for real against W1 surfaced that this board's bootloader (`BOARD.md` §1: Nordic's factory-programmed nRF5 "Open bootloader") activates *whatever it receives* into the fixed application slot, regardless of the address the source hex file's own Extended Linear Address record claims — confirmed against Nordic's own DFU documentation and this board's dual-slot flash map (`BOARD.md` §4: `slot0_partition`/`slot1_partition`, `storage_partition` outside both). Every provisioning write was landing on the application, not `storage_partition` — which is why the app stopped enumerating right after a write (a bare 55-byte record isn't a valid image) and why the reported serial never actually changed. The dongle's sealed enclosure exposes only USB-C, with no SWD probe on the bench to reach `storage_partition` directly, so the DFU limitation isn't a workaround-able inconvenience on this hardware — it rules the original design out. PLAN.md §4.13 has the full reasoning, including why the original argument against baking identity into the build doesn't hold for this project's actual manufacturing model (one person, no post-sale firmware updates, no adversarial threat model).
 
-On boot: read, verify CRC, validate `role` and `set_serial`. **On any failure or absence, do not initiate, do not advertise, render the fault, and emit `ERR NO_PROVISIONING`** (A19). There is no safe default for *which set am I in*.
+**The record itself** (`common/provisioning.h`): `set_serial[12]`, `role`, `own_addr[6]`, `peer_addr[2][6]`, `set_key[16]`. No `magic`/`version`/`crc32` — that machinery protected against corruption introduced by a separate, fallible write step, and that failure mode doesn't exist once the record is compiled into the same image, written by the same operation, as the application code around it.
 
-`../tools/provision.py` generates three records per set — dongle, RED, GREEN — from a serial, with random static-random addresses and a random 16-byte key, emitting three hex files and a human-readable manifest. No dependencies; write Intel HEX directly.
+**`../tools/provision.py`** generates a `provisioning_data.h` per role — dongle, RED, GREEN — from a serial, in its own output directory, plus a human-readable manifest. Prints the exact `west build` command for each role, including `-DCONFIG_PROVISIONING_HEADER_DIR=<dir>`.
 
-**Layout, split like `protocol.c`.** `common/provisioning.h`/`.c` is the Zephyr-free record struct, CRC and validation — no board, no SDK, host-tested at `dongle/tests/provisioning` (`make check`, 54 checks). `dongle/src/provisioning_flash.c` is the only Zephyr-specific part: it opens `storage_partition` via `flash_area_open(FIXED_PARTITION_ID(storage_partition), ...)`, reads the raw bytes, and additionally requires `role == DONGLE` — a record provisioned for a remote and flashed onto a dongle by mistake is the same class of manufacturing error as a bad CRC, not a case to let through. `engine_start()` calls it before the first `HELLO`; on failure it logs the specific reason (`provisioning_status_str()`) then emits `ERR NO_PROVISIONING`, and `HELLO`'s `<set>` field falls back to the fixed, deliberately-implausible `RR-0000` — the same reasoning the retired `CONFIG_DONGLE_SET_SERIAL_FALLBACK` Kconfig option carried, now permanent rather than a placeholder-until-Stage-2.
+**`CONFIG_PROVISIONING_HEADER_DIR` is a Kconfig string, not a plain CMake `-D` variable**, because `west build` runs under sysbuild, which only forwards `CONFIG_`-prefixed values into a specific image's cache automatically from a bare `-D` — the same reason `CONFIG_DONGLE_RADIO` already works with a bare `-D` and an arbitrary variable would not. Its value must be quoted on the command line (`-DCONFIG_PROVISIONING_HEADER_DIR="C:/path/to/dir"`) so the generated Kconfig fragment is a well-formed string literal.
 
-**Two things RP §10.1 leaves to the implementation, pinned in `common/provisioning.h` because a reader and `provision.py` that disagree on either produce a record that looks fine and is silently unreadable** — exactly the two-implementation-drift trap CLAUDE.md §2 already names for `PROTOCOL.md`:
+**On any failure, do not initiate, do not advertise, render the fault, and emit `ERR NO_PROVISIONING`** (A19) — kept, at two points instead of one:
 
-- The role enum's numeric values (`DONGLE=0`, `RED=1`, `GREEN=2`) and the magic/version split (`0x5252` "RR", version `1`, 2 bytes each).
-- The CRC32 variant: the ubiquitous "CRC-32" — poly `0xEDB88320` (reflected), init/xorout `0xFFFFFFFF`, same as zlib/PNG/gzip/Ethernet FCS — computed over every byte except the `crc32` field itself. `provision.py` uses `zlib.crc32` rather than reimplementing it, for the same drift reason. Both sides are checked against the standard test vector, `CRC-32("123456789") == 0xCBF43926`.
+- **Build-time, the primary guard:** `CMakeLists.txt` `FATAL_ERROR`s at configure time if `CONFIG_PROVISIONING_HEADER_DIR` is unset or the file isn't there. There is no default to silently fall back to — omitting it is a build error, not a boot-time state.
+- **Boot-time, belt and braces:** `engine_start()` calls `provisioning_validate(&PROV_RECORD)` before anything else touches the wire — structural sanity (serial charset, role range, an all-zero `set_key` sentinel), not a parser. On failure it logs the specific reason and `HELLO`'s `<set>` field falls back to the fixed, deliberately-implausible `RR-0000`, same as before.
 
-**Verified:** the host suite (54 checks: valid record, all three roles, erased-flash-reads-as-absent, bad version, single-bit-flip CRC catch, `set_serial` charset and NUL-padding, bad role, full field fidelity, and that a failed parse leaves the output untouched); a byte-for-byte cross-check of `provision.py`'s Intel HEX output through the same parser; a clean `west build` of the no-radio baseline with the new module linked in; and **A19 on real hardware, dongle side** — unprovisioned, `INFO` reports the `RR-0000` fallback; with a `provision.py` record written to `storage_partition`, `INFO` reports the provisioned serial exactly, and it survives an application reflash unchanged, as designed. **Not yet possible:** the remote half of "on both boards" (this row's acceptance criterion) needs remote firmware, which is Stage 4.
+**Layout, split like `protocol.c`.** `common/provisioning.h`/`.c` is the Zephyr-free struct definition and `provisioning_validate()` — no board, no SDK, host-tested at `dongle/tests/provisioning` (`make check`, 9 checks). `dongle/src/provisioning_flash.c` is deleted: there is nothing left to read from flash, and nothing else on this board reads a flash partition (`CONFIG_FLASH`/`CONFIG_FLASH_MAP` dropped from `prj.conf`).
 
-**Writing the record to `storage_partition` needs a specific procedure — two easier-looking ones fail.** This board's bootloader (`BOARD.md` §1: Nordic's factory-programmed nRF5 "Open bootloader") only speaks Serial DFU, and Serial DFU is built around replacing *the application*, not writing an arbitrary partition — pushing a bare data record through it took two dead ends before this one worked:
+**The role enum's numeric values** (`DONGLE=0`, `RED=1`, `GREEN=2`) are still pinned in `common/provisioning.h`, for the same drift reason `CLAUDE.md` §2 names for `PROTOCOL.md`: `provision.py`'s generator and the firmware source must agree on them, or a header that looks fine associates the wrong remote.
 
-1. **nRF Connect Programmer's GUI, given the application hex and the provisioning hex together, fails with a SLIP decoder timeout.** The two hex files sit ~900 KB apart (`0x1000` and `0xf0000`); the GUI appears to treat the pair as one merged image spanning that gap and times out transferring it. Load and write the provisioning hex **alone**, as its own DFU operation.
-2. **Programmer's DFU packaging step asks which SoftDevice the firmware needs, with no "None" option.** This project has no SoftDevice at any stage — the radio uses the SoftDevice Controller library linked into the image, not a separately-flashed blob — so there is no correct answer in that list. Use the CLI instead, which accepts the declaration the GUI can't express:
+**Verified:** the host suite (9 checks: valid record for all three roles, serial charset including the full-12-bytes-no-NUL edge case, bad role, all-zero-key sentinel rejected, a single nonzero key byte accepted); both firmwares rebuild clean and smaller against a generated set (radio=y 181,668 B, was 185,212 B; no-radio 54,936 B, was 56,200 B); and the configure-time refusal was confirmed to actually fire with no header directory supplied. **Not yet possible:** A19 on real hardware under this mechanism — the original "confirmed on hardware" result was for the now-abandoned flash-partition design and is in doubt for the reason above (the negative/unprovisioned case, needing only erased flash, is unaffected).
 
-   ```
-   nrfutil nrf5sdk-tools pkg generate --hw-version 52 --sd-req=0x00 \
-       --application <role>.hex --application-version 1 out.zip
-   nrfutil nrf5sdk-tools dfu usb-serial -pkg out.zip -p COMx
-   ```
-
-   `--sd-req=0x00` is the CLI's literal "no SoftDevice required". `nrf5sdk-tools` is a plugin, not part of the base `nrfutil` install — `nrfutil install nrf5sdk-tools` is a one-time step, the same shape as the MinGW-w64 install in §0 (`PLAN.md` §2.6): the base tool being present is not evidence the plugin is.
-
-A device that briefly stops enumerating right after a DFU write is not necessarily corrupted — the bootloader can sit in DFU mode after a write, pending a manual power cycle, rather than jumping back to the application on its own. Unplug and replug (without holding the button) before assuming anything is wrong.
-
-**Why not a `#define`-ed key.** It is faster and it makes A12, A13 and A19 untestable — three of the four cases standing between this product and a cross-associated match at a multi-mat event, which FS §2.3 classes as a scoring-integrity failure rather than an inconvenience. It also makes the refuse-to-operate path something added after the fact, which is to say a boot path nothing ever exercised.
+**A device that briefly stops enumerating right after a DFU write is not necessarily corrupted** — the bootloader can sit in DFU mode after a write, pending a manual power cycle, rather than jumping back to the application on its own. Unplug and replug (without holding the button) before assuming anything is wrong. This still applies to ordinary application updates, which is the only kind of DFU write this design performs now.
 
 ---
 

@@ -8,3 +8,9 @@ tests/**/test_provisioning
 tests/**/test_provisioning.exe
 tests/**/test_rframe
 tests/**/test_rframe.exe
+
+# provision.py's output: generated provisioning_data.h headers and the
+# manifest carry a real set_key in the clear — manufacturing-floor material,
+# never committed (common/provisioning.h's header comment, RADIO_PROTOCOL.md
+# §10.4).
+tools/out/

@@ -2,13 +2,26 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(remote)
 
+# Same binding decision as dongle/CMakeLists.txt, same reasoning: identity is
+# baked in at build time by dongle/tools/provision.py, no default to fall
+# back to. PLAN.md §4, 2026-08-12.
+if(NOT CONFIG_PROVISIONING_HEADER_DIR)
+  message(FATAL_ERROR
+    "CONFIG_PROVISIONING_HEADER_DIR not set. Generate one with dongle/tools/"
+    "provision.py and pass -DCONFIG_PROVISIONING_HEADER_DIR=<dir containing "
+    "provisioning_data.h>. See remote/BUILD_SPEC.md §9.")
+endif()
+if(NOT EXISTS "${CONFIG_PROVISIONING_HEADER_DIR}/provisioning_data.h")
+  message(FATAL_ERROR "No provisioning_data.h in ${CONFIG_PROVISIONING_HEADER_DIR}")
+endif()
+target_include_directories(app PRIVATE ${CONFIG_PROVISIONING_HEADER_DIR})
+
 target_sources(app PRIVATE
   src/main.c
   src/link.c
   src/buttons.c
   src/haptic.c
   src/indicators.c
-  src/prov_flash.c
   ../common/provisioning.c
   ../common/rframe.c
 )

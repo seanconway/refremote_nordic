@@ -1,73 +1,52 @@
 #!/usr/bin/env python3
 """Bench tool for the provisioning record — RADIO_PROTOCOL.md §10.1, dongle/BUILD_SPEC.md §9.
 
-Generates the three provisioning records for one set (dongle, RED, GREEN) from
-a serial: random LE static-random addresses, a random shared set key, and the
-CRC32 dongle/src/provisioning_flash.c and remote/src/prov_flash.c will check
-at boot. Writes each as an Intel HEX file targeting that board's storage
-partition — 0xf0000 (16 KB) for the dongle per dongle/BUILD_SPEC.md §9, and
-0xf8000 (32 KB) for RED/GREEN per remote/BUILD_SPEC.md §9, since the DK's
-stock devicetree partition sits at a different address than the dongle's —
-plus one human-readable manifest.
+Generates the three provisioning records for one set (dongle, RED, GREEN)
+from a serial: random LE static-random addresses and a random shared set key.
+Writes each as a small generated C header, `provisioning_data.h`, in its own
+per-role output directory — PLAN.md §4's binding decision, 2026-08-12: identity
+is baked into the firmware image at build time rather than read from a flash
+partition written by a separate step. Point `west build` at the directory with
+`-DCONFIG_PROVISIONING_HEADER_DIR=<dir>`; CMakeLists.txt refuses to configure without
+one, so there is no such thing as a build with no real identity.
 
     python provision.py RR-0001
     python provision.py RR-0001 -o out/
 
-Deliberately dependency-free beyond the Python standard library — no
-`intelhex`, no third-party crypto package. `zlib.crc32` is used for the CRC
-rather than reimplementing it, because it computes exactly the variant pinned
-in common/provisioning.h (poly 0xEDB88320, init/xorout 0xFFFFFFFF, the same
-"CRC-32" zlib/PNG/gzip/Ethernet all use) — a bench tool re-implementing that
-by hand is exactly the kind of thing that could drift from the firmware
-reader silently. common/provisioning.c's host tests pin the same check value
-this relies on: CRC-32("123456789") == 0xCBF43926.
+Then, for each role, the build command this tool prints, e.g.:
 
-The manifest this writes contains the set's shared key in the clear. Treat it
-as manufacturing-floor material, not something to commit or mail — RADIO_PROTOCOL.md
-§10.4 already notes set_key is stored in plain flash and depends on APPROTECT,
-not this tool, for protection against physical access.
+    west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build-radio \\
+        -- -DCONFIG_DONGLE_RADIO=y -DCONFIG_PROVISIONING_HEADER_DIR=<abs path>/out/RR-0001_dongle
+
+Deliberately dependency-free beyond the Python standard library.
+
+The manifest this writes, and the generated headers themselves, contain the
+set's shared key in the clear. Treat them as manufacturing-floor material, not
+something to commit or mail — RADIO_PROTOCOL.md §10.4 already notes set_key is
+stored in plain flash and depends on APPROTECT, not this tool, for protection
+against physical access.
 """
 import argparse
 import re
 import secrets
-import struct
 import sys
-import zlib
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Record layout — must track common/provisioning.h exactly. See that header
-# for why the magic/version split and role values are pinned rather than
-# assumed.
+# for why the role enum's numeric values are pinned rather than assumed.
 # ---------------------------------------------------------------------------
 
-MAGIC = 0x5252          # ASCII "RR", little-endian
-VERSION = 1
 SERIAL_LEN = 12
 ADDR_LEN = 6
-PEER_COUNT = 2
 KEY_LEN = 16
-RECORD_SIZE = 55         # 2 + 2 + 12 + 1 + 6 + 2*6 + 16 + 4
 
 ROLE_DONGLE, ROLE_RED, ROLE_GREEN = 0, 1, 2
 ROLE_NAMES = {ROLE_DONGLE: "dongle", ROLE_RED: "red", ROLE_GREEN: "green"}
-
-# dongle/BUILD_SPEC.md §9: 16 KB at 0xf0000, below the nRF5 bootloader.
-STORAGE_PARTITION_BASE = 0xF0000
-
-# remote/BUILD_SPEC.md §9: 32 KB at 0xf8000 on the nrf52840dk — the DK's stock
-# nordic/nrf52840_partition.dtsi puts storage_partition at a different address
-# than the dongle's, so RED/GREEN hex files must target this instead of
-# STORAGE_PARTITION_BASE above. A hex written at the wrong address doesn't
-# corrupt anything on this board (0xf0000-0xf8000 sits below storage_partition
-# and above the application), but the remote would still read as unprovisioned
-# — silently, since nothing at 0xf8000 was ever written.
-REMOTE_STORAGE_PARTITION_BASE = 0xF8000
-
-STORAGE_PARTITION_BASE_BY_ROLE = {
-    ROLE_DONGLE: STORAGE_PARTITION_BASE,
-    ROLE_RED: REMOTE_STORAGE_PARTITION_BASE,
-    ROLE_GREEN: REMOTE_STORAGE_PARTITION_BASE,
+ROLE_ENUM = {
+    ROLE_DONGLE: "PROVISIONING_ROLE_DONGLE",
+    ROLE_RED: "PROVISIONING_ROLE_RED",
+    ROLE_GREEN: "PROVISIONING_ROLE_GREEN",
 }
 
 SERIAL_RE = re.compile(r"^[A-Z0-9-]{1,%d}$" % SERIAL_LEN)
@@ -86,67 +65,44 @@ def random_static_addr():
     return bytes(addr)
 
 
-def pack_record(set_serial, role, own_addr, peer_addrs, set_key):
-    assert len(own_addr) == ADDR_LEN
-    assert len(peer_addrs) == PEER_COUNT
-    assert all(len(a) == ADDR_LEN for a in peer_addrs)
-    assert len(set_key) == KEY_LEN
-
-    serial_bytes = set_serial.encode("ascii").ljust(SERIAL_LEN, b"\x00")
-    assert len(serial_bytes) == SERIAL_LEN
-
-    body = struct.pack("<HH", MAGIC, VERSION)
-    body += serial_bytes
-    body += bytes([role])
-    body += own_addr
-    for a in peer_addrs:
-        body += a
-    body += set_key
-
-    assert len(body) == RECORD_SIZE - 4, len(body)
-
-    crc = zlib.crc32(body) & 0xFFFFFFFF
-    record = body + struct.pack("<I", crc)
-
-    assert len(record) == RECORD_SIZE
-    return record
-
-
 # ---------------------------------------------------------------------------
-# Intel HEX — written directly rather than pulling in the `intelhex` package.
-# Only what this tool needs: an extended linear address record (the storage
-# partition sits above the 16-bit offset an ordinary data record can address),
-# one data record, and EOF.
+# Generated header — a struct literal, not a byte layout. No packing, no CRC:
+# see common/provisioning.h's header comment for why that machinery is gone.
 # ---------------------------------------------------------------------------
 
-def _ihex_checksum(byte_values):
-    return (-sum(byte_values)) & 0xFF
+def _c_bytes(data):
+    return "{" + ", ".join("0x%02X" % b for b in data) + "}"
 
 
-def _ihex_line(byte_count, address16, record_type, data):
-    fields = [byte_count, (address16 >> 8) & 0xFF, address16 & 0xFF, record_type]
-    fields += list(data)
-    fields.append(_ihex_checksum(fields))
-    return ":" + "".join("%02X" % b for b in fields)
-
-
-def write_ihex(path, base_address, data):
-    lines = []
-    # Extended linear address record (type 04): the upper 16 bits of the
-    # address, big-endian in the data field. Needed because the storage
-    # partition's base (0xf0000) doesn't fit the 16-bit offset an ordinary
-    # data record addresses.
-    lines.append(_ihex_line(2, 0, 0x04, struct.pack(">H", (base_address >> 16) & 0xFFFF)))
-
-    offset = base_address & 0xFFFF
-    CHUNK = 16
-    for i in range(0, len(data), CHUNK):
-        chunk = data[i : i + CHUNK]
-        lines.append(_ihex_line(len(chunk), offset + i, 0x00, chunk))
-
-    lines.append(_ihex_line(0, 0, 0x01, []))  # EOF
-
-    path.write_text("\n".join(lines) + "\n", encoding="ascii")
+def write_header(path, set_serial, role, own_addr, peer_addrs, set_key):
+    serial_literal = set_serial.encode("ascii").decode("ascii")
+    lines = [
+        "/* Generated by dongle/tools/provision.py — DO NOT EDIT, DO NOT COMMIT.",
+        " * Set %s, role %s." % (set_serial, ROLE_NAMES[role]),
+        " *",
+        " * Contains this unit's identity and the shared set key in the clear.",
+        " * Manufacturing-floor material — RADIO_PROTOCOL.md §10.4. See",
+        " * common/provisioning.h for the struct this populates. */",
+        "#ifndef PROVISIONING_DATA_H_",
+        "#define PROVISIONING_DATA_H_",
+        "",
+        '#include "provisioning.h"',
+        "",
+        "static const struct provisioning_record PROV_RECORD = {",
+        '\t.set_serial = "%s",' % serial_literal,
+        "\t.role = %s," % ROLE_ENUM[role],
+        "\t.own_addr = %s," % _c_bytes(own_addr),
+        "\t.peer_addr = {",
+        "\t\t%s," % _c_bytes(peer_addrs[0]),
+        "\t\t%s," % _c_bytes(peer_addrs[1]),
+        "\t},",
+        "\t.set_key = %s," % _c_bytes(set_key),
+        "};",
+        "",
+        "#endif /* PROVISIONING_DATA_H_ */",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -157,23 +113,20 @@ def build_set(set_serial):
     green_addr = random_static_addr()
     set_key = secrets.token_bytes(KEY_LEN)
 
-    records = {
-        ROLE_DONGLE: pack_record(set_serial, ROLE_DONGLE, dongle_addr,
-                                  [red_addr, green_addr], set_key),
-        ROLE_RED: pack_record(set_serial, ROLE_RED, red_addr,
-                               [dongle_addr, zero_addr()], set_key),
-        ROLE_GREEN: pack_record(set_serial, ROLE_GREEN, green_addr,
-                                 [dongle_addr, zero_addr()], set_key),
+    peer_addrs = {
+        ROLE_DONGLE: (red_addr, green_addr),
+        ROLE_RED: (dongle_addr, zero_addr()),
+        ROLE_GREEN: (dongle_addr, zero_addr()),
     }
-    addrs = {ROLE_DONGLE: dongle_addr, ROLE_RED: red_addr, ROLE_GREEN: green_addr}
-    return records, addrs, set_key
+    own_addrs = {ROLE_DONGLE: dongle_addr, ROLE_RED: red_addr, ROLE_GREEN: green_addr}
+    return own_addrs, peer_addrs, set_key
 
 
 def addr_str(a):
     return ":".join("%02X" % b for b in a)
 
 
-def write_manifest(path, set_serial, addrs, set_key, filenames):
+def write_manifest(path, set_serial, own_addrs, set_key, header_dirs):
     lines = [
         "RefRemote provisioning manifest",
         "set_serial: %s" % set_serial,
@@ -186,10 +139,23 @@ def write_manifest(path, set_serial, addrs, set_key, filenames):
     ]
     for role in (ROLE_DONGLE, ROLE_RED, ROLE_GREEN):
         lines.append("[%s]" % ROLE_NAMES[role])
-        lines.append("  own_addr: %s" % addr_str(addrs[role]))
-        lines.append("  hex file: %s" % filenames[role].name)
+        lines.append("  own_addr: %s" % addr_str(own_addrs[role]))
+        lines.append("  header:   %s" % (header_dirs[role] / "provisioning_data.h"))
         lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def build_command(role, header_dir):
+    header_dir = header_dir.resolve()
+    if role == ROLE_DONGLE:
+        return (
+            "west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build-radio -- "
+            "-DCONFIG_DONGLE_RADIO=y -DCONFIG_PROVISIONING_HEADER_DIR=%s" % header_dir
+        )
+    return (
+        "west build -b nrf52840dk/nrf52840 remote -d remote/build -- "
+        "-DCONFIG_PROVISIONING_HEADER_DIR=%s" % header_dir
+    )
 
 
 def main():
@@ -207,19 +173,25 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    records, addrs, set_key = build_set(args.serial)
+    own_addrs, peer_addrs, set_key = build_set(args.serial)
 
-    filenames = {}
+    header_dirs = {}
     for role in (ROLE_DONGLE, ROLE_RED, ROLE_GREEN):
-        base = STORAGE_PARTITION_BASE_BY_ROLE[role]
-        fn = outdir / ("%s_%s.hex" % (args.serial, ROLE_NAMES[role]))
-        write_ihex(fn, base, records[role])
-        filenames[role] = fn
-        print("wrote %s (%d bytes @ 0x%06X)" % (fn, len(records[role]), base))
+        role_dir = outdir / ("%s_%s" % (args.serial, ROLE_NAMES[role]))
+        role_dir.mkdir(parents=True, exist_ok=True)
+        header_path = role_dir / "provisioning_data.h"
+        write_header(header_path, args.serial, role, own_addrs[role], peer_addrs[role], set_key)
+        header_dirs[role] = role_dir
+        print("wrote %s" % header_path)
 
     manifest = outdir / ("%s_manifest.txt" % args.serial)
-    write_manifest(manifest, args.serial, addrs, set_key, filenames)
+    write_manifest(manifest, args.serial, own_addrs, set_key, header_dirs)
     print("wrote %s" % manifest)
+
+    print()
+    print("Build commands:")
+    for role in (ROLE_DONGLE, ROLE_RED, ROLE_GREEN):
+        print("  %s" % build_command(role, header_dirs[role]))
 
     return 0
 
