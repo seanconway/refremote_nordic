@@ -1,0 +1,89 @@
+/*
+ * DK remote firmware — an nRF52840 DK standing in for a wrist remote that
+ * does not exist yet. remote/BUILD_SPEC.md is the implementable contract;
+ * RADIO_PROTOCOL.md is the wire contract it answers to.
+ */
+#include "prov_flash.h"
+#include "link.h"
+#include "buttons.h"
+#include "haptic.h"
+#include "indicators.h"
+
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+
+#define REMOTE_STACK_SIZE 2048
+#define REMOTE_PRIORITY   K_PRIO_COOP(7)
+
+static struct k_work_q remote_q;
+static K_THREAD_STACK_DEFINE(remote_stack, REMOTE_STACK_SIZE);
+
+/*
+ * A19: an unprovisioned unit does not advertise, does not initiate, and
+ * renders an unmistakable fault. There is no radio link yet to report a
+ * reason over, so this blinks all four LEDs together — no console, no CDC-
+ * ACM instance to spare on this board either (remote/BUILD_SPEC.md §10: RTT
+ * is free here, but that is for a human plugged into the debugger, not for
+ * an operator glancing at hardware on a bench).
+ */
+static void fault_forever(void)
+{
+	static const struct gpio_dt_spec leds[] = {
+		GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios),
+		GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios),
+		GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios),
+		GPIO_DT_SPEC_GET(DT_ALIAS(led3), gpios),
+	};
+
+	for (size_t i = 0; i < ARRAY_SIZE(leds); i++) {
+		if (gpio_is_ready_dt(&leds[i])) {
+			(void)gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
+		}
+	}
+
+	while (1) {
+		for (size_t i = 0; i < ARRAY_SIZE(leds); i++) {
+			(void)gpio_pin_set_dt(&leds[i], 1);
+		}
+		k_sleep(K_MSEC(200));
+		for (size_t i = 0; i < ARRAY_SIZE(leds); i++) {
+			(void)gpio_pin_set_dt(&leds[i], 0);
+		}
+		k_sleep(K_MSEC(200));
+	}
+}
+
+int main(void)
+{
+	struct provisioning_record prov;
+	enum provisioning_status st;
+
+	st = prov_flash_load(&prov);
+	if (st != PROVISIONING_OK) {
+		fault_forever();
+		return 0; /* unreached */
+	}
+
+	k_work_queue_init(&remote_q);
+	k_work_queue_start(&remote_q, remote_stack, K_THREAD_STACK_SIZEOF(remote_stack),
+			   REMOTE_PRIORITY, NULL);
+
+	if (haptic_init(&remote_q) != 0) {
+		fault_forever();
+		return 0;
+	}
+	if (indicators_init(&remote_q) != 0) {
+		fault_forever();
+		return 0;
+	}
+	if (link_init(&prov, &remote_q) != 0) {
+		fault_forever();
+		return 0;
+	}
+	if (buttons_init(link_on_gesture, &remote_q) != 0) {
+		fault_forever();
+		return 0;
+	}
+
+	return 0;
+}

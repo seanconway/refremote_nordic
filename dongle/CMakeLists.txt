@@ -16,16 +16,23 @@ target_sources(app PRIVATE
 # unchanged with the remote firmware, so it is not duplicated under src/.
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 
-# Exactly one implementation of radio.h is compiled in. Selecting neither would
-# fail at link time with an undefined-reference list rather than a sentence, so
-# the y case is refused here until src/radio_ble.c lands at Stage 3.
+# Stage 3: ../common/rframe.h reuses protocol.h's button/gesture/remote/
+# waveform/indicator enums as its own vocabulary (radio.h has done this since
+# Stage 1 — "the engine never acquires a second name for something the wire
+# protocol already names"), so a common/ header needs src/ on its include
+# path to reach a src/ header. protocol.c itself is never linked into the
+# remote firmware; only the enum declarations are needed there.
+target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# Exactly one implementation of radio.h is compiled in.
+#
+# rframe.c is scoped to the y branch, not the unconditional list above:
+# radio_null.c never touches a frame (BUILD_SPEC §2 — "everything DISCONNECTED,
+# rendered on the board's two LEDs"), so linking the codec into the no-radio
+# baseline would be dead weight with no caller, the same reasoning that keeps
+# provisioning_flash.c's role check strict rather than permissive.
 if(CONFIG_DONGLE_RADIO)
-  message(FATAL_ERROR
-    # Plain ASCII: the CMake console mangles a section sign into mojibake, and
-    # a build-stopping message is the wrong place to lose a document reference.
-    "CONFIG_DONGLE_RADIO=y needs src/radio_ble.c, which arrives at Stage 3 "
-    "(PLAN.md section 3.1). Build the no-radio baseline with "
-    "-DCONFIG_DONGLE_RADIO=n, which is the current default.")
+  target_sources(app PRIVATE src/radio_ble.c ../common/rframe.c)
 else()
   target_sources(app PRIVATE src/radio_null.c)
 endif()

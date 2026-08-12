@@ -498,12 +498,56 @@ static void on_radio_diag(enum proto_remote src, const char *text)
 	send_log(t);
 }
 
+/* RADIO_PROTOCOL.md §14 A5: a gap is a real finding, never a reason to
+ * withhold the event it arrived alongside — on_input() has already run (or
+ * will, for the same frame) by the time this fires; the two are independent
+ * outcomes of the same CTR classification. */
+static void on_radio_gap(enum proto_remote src, uint8_t frames_missing)
+{
+	char text[64];
+
+	if (!valid_remote(src)) {
+		return;
+	}
+	c_radio_gap += frames_missing;
+	(void)snprintf(text, sizeof(text), "%s: radio_gap +%u",
+		       proto_remote_name(src), (unsigned int)frames_missing);
+	send_log(text);
+}
+
+/* A4: a duplicate CTR produces no EVT — the radio layer already withheld
+ * on_input() for this frame, so this is purely the counter and its LOG. */
+static void on_radio_dup(enum proto_remote src)
+{
+	char text[64];
+
+	if (!valid_remote(src)) {
+		return;
+	}
+	c_radio_dup++;
+	(void)snprintf(text, sizeof(text), "%s: radio_dup", proto_remote_name(src));
+	send_log(text);
+}
+
+/* A13/A14: src is deliberately unused. These are wire-level ERR lines, not
+ * per-remote LOG diagnostics — BUILD_SPEC.md §7.1 gives the tokens verbatim,
+ * and send_err() already latches indicator_error(), which is correct here:
+ * both cases are manufacturing-class faults, the same family as a bad CRC. */
+static void on_radio_fault(enum proto_remote src, const char *code)
+{
+	ARG_UNUSED(src);
+	send_err(code);
+}
+
 static const struct radio_cb radio_callbacks = {
 	.on_input     = on_radio_input,
 	.on_ready     = on_radio_ready,
 	.on_link      = on_radio_link,
 	.on_telemetry = on_radio_telemetry,
+	.on_gap       = on_radio_gap,
+	.on_dup       = on_radio_dup,
 	.on_diag      = on_radio_diag,
+	.on_fault     = on_radio_fault,
 };
 
 /* ------------------------------------------------------------------------ */
@@ -573,6 +617,10 @@ static void link_reemit_handler(struct k_work *work)
 	 * noise on a link whose state has not changed since boot. */
 	for (int r = 0; r < PROTO_REMOTE_COUNT; r++) {
 		if (links[r].state == PROTO_LINK_CONNECTED) {
+			/* RP §9.3: sampled on the re-emission tick, not cached
+			 * from whatever the last state transition happened to
+			 * carry. */
+			links[r].rssi = radio_rssi((enum proto_remote)r);
 			send_link((enum proto_remote)r);
 		}
 	}
@@ -979,7 +1027,10 @@ void engine_start(void)
 		}
 	}
 
-	if (radio_init(&radio_callbacks, &engine_q) != 0) {
+	/* NULL when unprovisioned: ERR NO_PROVISIONING has already fired above,
+	 * and RP §14 A19 requires the radio not initiate or advertise at all
+	 * in that case rather than fail radio_init() outright. */
+	if (radio_init(&radio_callbacks, &engine_q, provisioned ? &prov : NULL) != 0) {
 		send_err("RADIO_INIT_FAILED");
 	}
 

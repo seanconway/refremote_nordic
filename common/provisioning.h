@@ -48,6 +48,15 @@ struct provisioning_record {
 	char set_serial[PROVISIONING_SERIAL_LEN + 1]; /* NUL-terminated for callers */
 	enum provisioning_role role;
 	uint8_t own_addr[PROVISIONING_ADDR_LEN];
+	/* On a DONGLE record, index 0 is RED and index 1 is GREEN — matching
+	 * enum proto_remote's numbering, and how dongle/tools/provision.py's
+	 * build_set() already orders them ([red_addr, green_addr]) even though
+	 * RADIO_PROTOCOL.md §10.1 does not pin the order in writing. Pinned
+	 * here for the same reason as the CRC32 variant above: radio_ble.c
+	 * indexes this array by proto_remote directly, and a reader that
+	 * assumed the opposite order would swap which remote's presses land on
+	 * which lamp with no error anywhere. On a RED/GREEN record, index 0 is
+	 * the dongle and index 1 is the zero slot (unused). */
 	uint8_t peer_addr[PROVISIONING_PEER_COUNT][PROVISIONING_ADDR_LEN];
 	uint8_t set_key[PROVISIONING_KEY_LEN];
 };

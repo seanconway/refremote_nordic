@@ -24,6 +24,7 @@
 #define DONGLE_RADIO_H_
 
 #include "protocol.h"
+#include "provisioning.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -64,11 +65,43 @@ struct radio_cb {
 	void (*on_telemetry)(enum proto_remote src, uint8_t batt_pct,
 			     uint8_t flags);
 
+	/*
+	 * CTR classification, RADIO_PROTOCOL.md §6.1/§14 A4/A5. The radio
+	 * layer owns per-connection CTR bookkeeping (rframe_ctr_accept()) —
+	 * these two feed the engine's aggregate radio_gap/radio_dup counters,
+	 * which BUILD_SPEC.md §8 already stages for the handshake LOG line.
+	 * A duplicate produces no EVT and is not routed through on_input().
+	 */
+	void (*on_gap)(enum proto_remote src, uint8_t frames_missing);
+	void (*on_dup)(enum proto_remote src);
+
 	/* Freeform diagnostic destined for a LOG line. Never semantic. */
 	void (*on_diag)(enum proto_remote src, const char *text);
+
+	/*
+	 * A13/A14 (RADIO_PROTOCOL.md §3.2, §14): a manufacturing-class fault,
+	 * distinct from on_diag() because these are wire-level ERR lines
+	 * (proto_enc_err()), not LOG diagnostics — BUILD_SPEC.md §7.1 names the
+	 * exact tokens, "SET_MISMATCH" and "REMOTE_PROTO_MISMATCH". The radio
+	 * layer has already disconnected by the time this fires.
+	 */
+	void (*on_fault)(enum proto_remote src, const char *code);
 };
 
-int radio_init(const struct radio_cb *cb, struct k_work_q *workq);
+/*
+ * `prov` is NULL when the dongle is unprovisioned — engine_start() already
+ * logged and reported ERR NO_PROVISIONING before calling this, and
+ * RADIO_PROTOCOL.md §14 A19 requires the radio not initiate or advertise at
+ * all in that case, so radio_ble.c must treat a NULL prov as "do nothing,
+ * return success" rather than as an error to fail radio_init() over. When
+ * non-NULL, prov->peer_addr[PROTO_REMOTE_RED]/[PROTO_REMOTE_GREEN] and
+ * prov->set_key are the association parameters BUILD_SPEC.md §7.1 needs, and
+ * prov->own_addr is the dongle's own LE static random identity address —
+ * RP §10.2 requires it fixed at provisioning, which only radio_ble.c can act
+ * on, since it is the first Zephyr Bluetooth consumer of the record.
+ */
+int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
+	       const struct provisioning_record *prov);
 
 /*
  * ttl_4ms is the frame's remaining useful life in 4 ms units; 0 means no
@@ -92,5 +125,11 @@ int radio_send_host(enum proto_remote r, bool up);
 /* True once the remote is fully established per RADIO_PROTOCOL.md §9.4 —
  * encrypted, identity validated, CCCD subscribed. Not merely "connected". */
 bool radio_is_ready(enum proto_remote r);
+
+/* RP §9.3: "averaged over the last 8 connection events", read by
+ * engine.c's link_reemit_handler on its 10 s tick so a re-sent LINK line
+ * carries a fresh value rather than whatever was current at the last state
+ * transition. 0 for a remote with no sample yet, or under radio_null. */
+int8_t radio_rssi(enum proto_remote r);
 
 #endif /* DONGLE_RADIO_H_ */

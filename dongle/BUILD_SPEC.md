@@ -500,8 +500,8 @@ Rung names are `PLAN.md`'s, kept so the results log stays continuous.
 | **0** | Host suites rewritten to v3.0 before the parser is touched | ◐ 2026-08-11 — toolchain in, protocol suite green at 131 checks. The `rframe` suite moves to stage 3, still written before its codec |
 | **1** | Wire v3.0, the seam, `radio_null` | ◐ 2026-08-11 — code-complete, **V0** green (T1–T16, both fail-closed cases), both build configurations clean. Outstanding: wire-log diff against the emulator (modulo §5.7), and **V1–V6** on hardware with `TEST 0` sent first |
 | **2** | Provisioning record, reader, refusal path, bench tool | **A19** on both boards. One set provisioned |
-| **3** | `rframe` codec, then BLE at 7.5 ms | **W0** green (A1–A7, A11, A20 at codec level). **W1** *including* A12, A13, A14, A19 — a pass on the positive case alone is not a pass |
-| **4** | End to end | Press on the DK → score on the scoreboard → tap rendered on that DK. **W2–W5**, with **A15** and **A20** verified by frame count |
+| **3** | `rframe` codec, then BLE at 7.5 ms | ◐ **Code-complete 2026-08-12.** `common/rframe.c/.h` and `src/radio_ble.c` written and building clean under `-DCONFIG_DONGLE_RADIO=y`; `dongle/tests/rframe` (20 checks) written but not run — host `as.exe` blocked in this environment, independently cross-checked instead (PLAN.md §9.2/§9.3). **W0** and **W1** (A1–A7, A11, A20 at codec level; A12, A13, A14, A19 on the connection) remain to be run on hardware — a pass on the positive case alone is not a pass |
+| **4** | End to end | ◐ **Code-complete 2026-08-12.** The whole DK remote firmware written (`../remote/src/`), building clean against `nrf52840dk/nrf52840`. Press on the DK → score on the scoreboard → tap rendered on that DK, **W2–W5**, **A15**, and **A20** verified by frame count — all still to be run on hardware |
 | **5** | Measurement | **W6–W8**, **V8**, **R2**. Latency at range for the record, not as a gate |
 
 **Deferred with reasons recorded:** V7 (version guard — needs a deliberately-wrong rebuild, and the app-side guard is unit-tested at M1) and V8 as a gate rather than as an overnight run once Stage 4 is stable.

@@ -22,7 +22,8 @@
 
 #include <zephyr/kernel.h>
 
-int radio_init(const struct radio_cb *cb, struct k_work_q *workq)
+int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
+	       const struct provisioning_record *prov)
 {
 	/*
 	 * Neither is stored, and that is not an oversight.
@@ -34,6 +35,7 @@ int radio_init(const struct radio_cb *cb, struct k_work_q *workq)
 	 */
 	ARG_UNUSED(cb);
 	ARG_UNUSED(workq);
+	ARG_UNUSED(prov);
 	return 0;
 }
 
@@ -99,4 +101,10 @@ bool radio_is_ready(enum proto_remote r)
 {
 	ARG_UNUSED(r);
 	return false;
+}
+
+int8_t radio_rssi(enum proto_remote r)
+{
+	ARG_UNUSED(r);
+	return 0;
 }

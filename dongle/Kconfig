@@ -3,6 +3,12 @@ menu "Dongle bridge options"
 config DONGLE_RADIO
 	bool "Bluetooth LE radio to the wrist remotes"
 	default n
+	select BT
+	select BT_CENTRAL
+	select BT_GATT_CLIENT
+	select BT_SMP
+	select BT_NRF_CONN_SET_LTK
+	select BT_USER_PHY_UPDATE
 	help
 	  Selects src/radio_ble.c, the BLE central that talks
 	  RADIO_PROTOCOL.md v1.0 to two wrist remotes.
