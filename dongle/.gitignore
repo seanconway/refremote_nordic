@@ -6,3 +6,5 @@ tests/**/test_protocol
 tests/**/test_protocol.exe
 tests/**/test_provisioning
 tests/**/test_provisioning.exe
+tests/**/test_rframe
+tests/**/test_rframe.exe
