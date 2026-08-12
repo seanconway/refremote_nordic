@@ -11,7 +11,7 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 
 > **The no-radio baseline (V0–V6) is closed.** The application has held the port repeatedly, the handshake, the reverse path, supervision/disconnection, and reconnect all check out on hardware. A few rows are carried forward rather than chased — burst suppression, the remote-render half of supervision, a scripted 10× reconnect, and a dongle-swap test — each needs either hardware that doesn't exist yet or scripting rather than manual observation; see `PLAN.md` §5, §9.2. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
 
-> **Stage 2 (provisioning) is code-complete but not yet flashed** — `BUILD_SPEC.md` §9. The source tree is ahead of the 0.2.0 image on the physical dongle: `HELLO`'s `<set>` field and `ERR NO_PROVISIONING` behave as specified in the host suite (54 checks) and against a real `provision.py` record decoded byte-for-byte back through the parser, and `west build` is clean, but nobody has written a record to a real board's `storage_partition` yet or watched `INFO` report it.
+> **Stage 2 (provisioning) is closed, confirmed on hardware 2026-08-12** — `BUILD_SPEC.md` §9. Unprovisioned, `INFO` reports the `RR-0000` fallback; with a `provision.py` record written to `storage_partition`, it reports the provisioned serial exactly, and that survives an application reflash unchanged. **Writing the record needs a specific procedure** — nRF Connect Programmer's GUI cannot do it (times out merging the app and provisioning hex into one transfer, and its DFU packaging has no "no SoftDevice" option); use the `nrfutil nrf5sdk-tools` CLI with `--sd-req=0x00` instead, per `BUILD_SPEC.md` §9.
 
 ## Layout
 

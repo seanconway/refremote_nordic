@@ -454,7 +454,22 @@ On boot: read, verify CRC, validate `role` and `set_serial`. **On any failure or
 - The role enum's numeric values (`DONGLE=0`, `RED=1`, `GREEN=2`) and the magic/version split (`0x5252` "RR", version `1`, 2 bytes each).
 - The CRC32 variant: the ubiquitous "CRC-32" — poly `0xEDB88320` (reflected), init/xorout `0xFFFFFFFF`, same as zlib/PNG/gzip/Ethernet FCS — computed over every byte except the `crc32` field itself. `provision.py` uses `zlib.crc32` rather than reimplementing it, for the same drift reason. Both sides are checked against the standard test vector, `CRC-32("123456789") == 0xCBF43926`.
 
-**Verified so far:** the host suite (54 checks: valid record, all three roles, erased-flash-reads-as-absent, bad version, single-bit-flip CRC catch, `set_serial` charset and NUL-padding, bad role, full field fidelity, and that a failed parse leaves the output untouched); a byte-for-byte cross-check of `provision.py`'s Intel HEX output through the same parser (a generated record round-trips correctly and the address/serial fields come back unchanged); and a clean `west build` of the no-radio baseline with the new module linked in. **Not yet run: on hardware.** Writing a `provision.py` record onto a real dongle and observing `HELLO`'s `<set>` field and a boot-time `ERR NO_PROVISIONING` on an unprovisioned one are manual rungs, not yet exercised — `PLAN.md` §5 is where those get tracked. Also not yet possible: the remote half of "on both boards" (this row's acceptance criterion) needs remote firmware, which is Stage 4.
+**Verified:** the host suite (54 checks: valid record, all three roles, erased-flash-reads-as-absent, bad version, single-bit-flip CRC catch, `set_serial` charset and NUL-padding, bad role, full field fidelity, and that a failed parse leaves the output untouched); a byte-for-byte cross-check of `provision.py`'s Intel HEX output through the same parser; a clean `west build` of the no-radio baseline with the new module linked in; and **A19 on real hardware, dongle side** — unprovisioned, `INFO` reports the `RR-0000` fallback; with a `provision.py` record written to `storage_partition`, `INFO` reports the provisioned serial exactly, and it survives an application reflash unchanged, as designed. **Not yet possible:** the remote half of "on both boards" (this row's acceptance criterion) needs remote firmware, which is Stage 4.
+
+**Writing the record to `storage_partition` needs a specific procedure — two easier-looking ones fail.** This board's bootloader (`BOARD.md` §1: Nordic's factory-programmed nRF5 "Open bootloader") only speaks Serial DFU, and Serial DFU is built around replacing *the application*, not writing an arbitrary partition — pushing a bare data record through it took two dead ends before this one worked:
+
+1. **nRF Connect Programmer's GUI, given the application hex and the provisioning hex together, fails with a SLIP decoder timeout.** The two hex files sit ~900 KB apart (`0x1000` and `0xf0000`); the GUI appears to treat the pair as one merged image spanning that gap and times out transferring it. Load and write the provisioning hex **alone**, as its own DFU operation.
+2. **Programmer's DFU packaging step asks which SoftDevice the firmware needs, with no "None" option.** This project has no SoftDevice at any stage — the radio uses the SoftDevice Controller library linked into the image, not a separately-flashed blob — so there is no correct answer in that list. Use the CLI instead, which accepts the declaration the GUI can't express:
+
+   ```
+   nrfutil nrf5sdk-tools pkg generate --hw-version 52 --sd-req=0x00 \
+       --application <role>.hex --application-version 1 out.zip
+   nrfutil nrf5sdk-tools dfu usb-serial -pkg out.zip -p COMx
+   ```
+
+   `--sd-req=0x00` is the CLI's literal "no SoftDevice required". `nrf5sdk-tools` is a plugin, not part of the base `nrfutil` install — `nrfutil install nrf5sdk-tools` is a one-time step, the same shape as the MinGW-w64 install in §0 (`PLAN.md` §2.6): the base tool being present is not evidence the plugin is.
+
+A device that briefly stops enumerating right after a DFU write is not necessarily corrupted — the bootloader can sit in DFU mode after a write, pending a manual power cycle, rather than jumping back to the application on its own. Unplug and replug (without holding the button) before assuming anything is wrong.
 
 **Why not a `#define`-ed key.** It is faster and it makes A12, A13 and A19 untestable — three of the four cases standing between this product and a cross-associated match at a multi-mat event, which FS §2.3 classes as a scoring-integrity failure rather than an inconvenience. It also makes the refuse-to-operate path something added after the fact, which is to say a boot path nothing ever exercised.
 

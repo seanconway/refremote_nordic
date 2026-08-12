@@ -1,0 +1,6 @@
+# DFU packages and provisioning output generated at the repo root while
+# following dongle/BUILD_SPEC.md §9's flashing procedure. The provisioning
+# manifest contains a set's shared key in the clear — see the warning
+# dongle/tools/provision.py writes into it. None of this belongs in git.
+*.zip
+/out/
