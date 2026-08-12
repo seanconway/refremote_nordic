@@ -9,11 +9,18 @@
  *     -> RR_UPLINK CCCD written: first notification allowed is UP_READY
  *     -> RR_DOWNLINK writes decoded and dispatched to haptic.c/indicators.c
  *
- * KNOWN GAP, same one dongle/src/radio_ble.c records: GATT and bt_conn
- * callbacks below call directly into buttons.c/haptic.c/indicators.c state
- * from whatever thread Zephyr's BT host dispatches them on, not marshalled
- * onto workq first. Low-frequency (connection lifecycle), not the per-press
- * path. Fix alongside the dongle-side gap before soak testing.
+ * THREADING: same discipline as dongle/src/radio_ble.c, same reason — this
+ * board has its own single cooperative workqueue (main.c's remote_q, shared
+ * by buttons.c/haptic.c/indicators.c), and the invariant only holds if the
+ * BT host thread is the only other source of events and it never touches
+ * that state directly either. bt_conn_cb and the GATT server callbacks below
+ * copy out the (small, short-lived) data they were handed into a struct
+ * link_evt, push it onto link_evtq, and submit the single static
+ * link_evt_work to link_workq; link_evt_work drains the queue and does the
+ * actual state mutation and haptic.c/indicators.c calls there. The one
+ * exception is identity_read_cb: it only ever serves identity_buf, filled
+ * once at boot and never written again, so there is nothing to race and
+ * nothing to defer — and its ATT read response has to be synchronous anyway.
  */
 #include "link.h"
 #include "haptic.h"
@@ -21,6 +28,7 @@
 #include "rframe.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -69,12 +77,71 @@ static struct k_work_q *link_workq;
 static struct k_work_delayable telemetry_work;
 
 /* ------------------------------------------------------------------------ */
+/* BT-thread -> link_workq event marshaling                                  */
+/*                                                                            */
+/* See this file's header comment. Sized for 8 pending events: connection-
+ * lifecycle ones are inherently one-in-flight-at-a-time, and a downlink
+ * write burst is bounded by the controller's own connection event cadence.
+ * A full queue drops the event and counts it — fail closed, CLAUDE.md §4.4.
+ */
+enum link_evt_type {
+	LINK_EVT_CONNECTED,
+	LINK_EVT_DISCONNECTED,
+	LINK_EVT_SECURITY_CHANGED,
+	LINK_EVT_CCC_CHANGED,
+	LINK_EVT_DOWNLINK_WRITE,
+};
+
+struct link_evt {
+	enum link_evt_type type;
+	struct bt_conn *conn; /* ref'd by the shim, unref'd once the dispatcher
+			       * has run the handler; NULL for CCC/downlink
+			       * events, which need no conn identification —
+			       * this board has exactly one connection */
+	union {
+		struct {
+			uint8_t err;
+		} connected;
+		struct {
+			bt_security_t level;
+			enum bt_security_err err;
+		} security;
+		struct {
+			uint16_t value;
+		} ccc;
+		struct {
+			uint8_t data[RFRAME_MAX_LEN];
+			uint16_t length;
+		} downlink;
+	};
+};
+
+K_MSGQ_DEFINE(link_evtq, sizeof(struct link_evt), 8, 4);
+static struct k_work link_evt_work;
+static uint32_t link_evt_drops;
+
+static void link_evt_post(const struct link_evt *evt)
+{
+	if (k_msgq_put(&link_evtq, evt, K_NO_WAIT) != 0) {
+		link_evt_drops++;
+		if (evt->conn != NULL) {
+			bt_conn_unref(evt->conn);
+		}
+		return;
+	}
+	(void)k_work_submit_to_queue(link_workq, &link_evt_work);
+}
+
+/* ------------------------------------------------------------------------ */
 /* GATT attribute callbacks                                                  */
 /* ------------------------------------------------------------------------ */
 
 static ssize_t identity_read_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 				void *buf, uint16_t len, uint16_t offset)
 {
+	/* No marshaling: identity_buf is written once at boot (link_init())
+	 * and never again, so there is nothing here that races with
+	 * link_workq, and an ATT read has to answer synchronously regardless. */
 	ARG_UNUSED(conn);
 	return bt_gatt_attr_read(conn, attr, buf, len, offset, identity_buf,
 				 sizeof(identity_buf));
@@ -82,29 +149,27 @@ static ssize_t identity_read_cb(struct bt_conn *conn, const struct bt_gatt_attr 
 
 static void send_uplink(const uint8_t *buf, int len);
 
-static void uplink_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+/*
+ * RP §7.2: UP_READY is the first uplink frame after subscription, whenever
+ * the remote holds no indicator state — which is always true right here,
+ * since this fires once per fresh subscription and the remote never retains
+ * indicator state across one (§7.1 of this doc). ctr_base is "the value CTR
+ * will take on the next uplink frame" (RP §7.2) — that is next_ctr's value
+ * *after* this frame's own increment, i.e. next_ctr as read below,
+ * post-increment.
+ */
+static void handle_ccc_changed(uint16_t value)
 {
 	uint8_t buf[RFRAME_MAX_LEN];
 	uint8_t ctr;
 	enum rframe_ready_reason reason;
 	int n;
 
-	ARG_UNUSED(attr);
-
 	uplink_subscribed = (value == BT_GATT_CCC_NOTIFY);
 	if (!uplink_subscribed) {
 		return;
 	}
 
-	/*
-	 * RP §7.2: UP_READY is the first uplink frame after subscription,
-	 * whenever the remote holds no indicator state — which is always true
-	 * right here, since this fires once per fresh subscription and the
-	 * remote never retains indicator state across one (§7.1 of this doc).
-	 * ctr_base is "the value CTR will take on the next uplink frame"
-	 * (RP §7.2) — that is next_ctr's value *after* this frame's own
-	 * increment, i.e. next_ctr as read below, post-increment.
-	 */
 	ctr = next_ctr++;
 	reason = booted_once ? RFRAME_READY_RECONNECT : RFRAME_READY_BOOT;
 	n = rframe_enc_up_ready(buf, sizeof(buf), ctr, next_ctr, reason);
@@ -113,28 +178,17 @@ static void uplink_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
 	send_uplink(buf, n);
 }
 
-static ssize_t downlink_write_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-				 const void *buf, uint16_t len, uint16_t offset,
-				 uint8_t flags)
+static void handle_downlink_write(const uint8_t *data, uint16_t length)
 {
 	struct rframe_msg msg;
 	enum rframe_decode_status st;
 
-	ARG_UNUSED(conn);
-	ARG_UNUSED(attr);
-	ARG_UNUSED(flags);
-
-	if (offset != 0) {
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
-	}
-
-	st = rframe_decode(buf, len, &msg);
+	st = rframe_decode(data, length, &msg);
 	switch (st) {
 	case RFRAME_ERR_UNKNOWN_TYPE:
-		return len; /* A2: ignore silently */
 	case RFRAME_ERR_LENGTH:
 	case RFRAME_ERR_FIELD:
-		return len; /* A3/A1: ignore. No LOG channel exists on this board. */
+		return; /* A1/A2/A3: ignore. No LOG channel exists on this board. */
 	default:
 		break;
 	}
@@ -157,7 +211,39 @@ static ssize_t downlink_write_cb(struct bt_conn *conn, const struct bt_gatt_attr
 	default:
 		break;
 	}
+}
 
+static void uplink_ccc_changed(const struct bt_gatt_attr *attr, uint16_t value)
+{
+	struct link_evt evt = { .type = LINK_EVT_CCC_CHANGED };
+
+	ARG_UNUSED(attr);
+	evt.ccc.value = value;
+	link_evt_post(&evt);
+}
+
+static ssize_t downlink_write_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+				 const void *buf, uint16_t len, uint16_t offset,
+				 uint8_t flags)
+{
+	struct link_evt evt = { .type = LINK_EVT_DOWNLINK_WRITE };
+
+	ARG_UNUSED(conn);
+	ARG_UNUSED(attr);
+	ARG_UNUSED(flags);
+
+	if (offset != 0) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	}
+
+	evt.downlink.length = MIN(len, sizeof(evt.downlink.data));
+	memcpy(evt.downlink.data, buf, evt.downlink.length);
+	link_evt_post(&evt);
+
+	/* Write Without Response: this return value is not used to build an
+	 * ATT reply (there isn't one), only to satisfy the callback's
+	 * signature — the actual decode+dispatch happens in
+	 * handle_downlink_write() above, on link_workq. */
 	return len;
 }
 
@@ -244,7 +330,7 @@ static void telemetry_handler(struct k_work *work)
 
 static void start_advertising(void);
 
-static void on_connected(struct bt_conn *conn, uint8_t err)
+static void handle_connected(struct bt_conn *conn, uint8_t err)
 {
 	if (err) {
 		start_advertising();
@@ -268,10 +354,8 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 	k_work_reschedule_for_queue(link_workq, &telemetry_work, K_NO_WAIT);
 }
 
-static void on_disconnected(struct bt_conn *conn, uint8_t reason)
+static void handle_disconnected(struct bt_conn *conn)
 {
-	ARG_UNUSED(reason);
-
 	if (active_conn == conn) {
 		bt_conn_unref(active_conn);
 		active_conn = NULL;
@@ -282,15 +366,38 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason)
 	start_advertising();
 }
 
-static void on_security_changed(struct bt_conn *conn, bt_security_t level,
-				enum bt_security_err err)
+static void handle_security_changed(bt_security_t level, enum bt_security_err err)
 {
-	ARG_UNUSED(conn);
-
 	/* A12 from this side: an encryption failure just means the link never
 	 * becomes usable — GATT_PERM_*_ENCRYPT already refuses every
 	 * characteristic below L4, so there is nothing further to refuse. */
 	indicators_set_radio_up(err == BT_SECURITY_ERR_SUCCESS && level >= BT_SECURITY_L4);
+}
+
+static void on_connected(struct bt_conn *conn, uint8_t err)
+{
+	struct link_evt evt = { .type = LINK_EVT_CONNECTED, .conn = bt_conn_ref(conn) };
+
+	evt.connected.err = err;
+	link_evt_post(&evt);
+}
+
+static void on_disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	struct link_evt evt = { .type = LINK_EVT_DISCONNECTED, .conn = bt_conn_ref(conn) };
+
+	ARG_UNUSED(reason);
+	link_evt_post(&evt);
+}
+
+static void on_security_changed(struct bt_conn *conn, bt_security_t level,
+				enum bt_security_err err)
+{
+	struct link_evt evt = { .type = LINK_EVT_SECURITY_CHANGED, .conn = bt_conn_ref(conn) };
+
+	evt.security.level = level;
+	evt.security.err = err;
+	link_evt_post(&evt);
 }
 
 static struct bt_conn_cb conn_callbacks = {
@@ -298,6 +405,41 @@ static struct bt_conn_cb conn_callbacks = {
 	.disconnected = on_disconnected,
 	.security_changed = on_security_changed,
 };
+
+/* ------------------------------------------------------------------------ */
+/* link_evt dispatcher                                                       */
+/* ------------------------------------------------------------------------ */
+
+static void link_evt_work_handler(struct k_work *work)
+{
+	struct link_evt evt;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&link_evtq, &evt, K_NO_WAIT) == 0) {
+		switch (evt.type) {
+		case LINK_EVT_CONNECTED:
+			handle_connected(evt.conn, evt.connected.err);
+			break;
+		case LINK_EVT_DISCONNECTED:
+			handle_disconnected(evt.conn);
+			break;
+		case LINK_EVT_SECURITY_CHANGED:
+			handle_security_changed(evt.security.level, evt.security.err);
+			break;
+		case LINK_EVT_CCC_CHANGED:
+			handle_ccc_changed(evt.ccc.value);
+			break;
+		case LINK_EVT_DOWNLINK_WRITE:
+			handle_downlink_write(evt.downlink.data, evt.downlink.length);
+			break;
+		}
+
+		if (evt.conn != NULL) {
+			bt_conn_unref(evt.conn);
+		}
+	}
+}
 
 /* ------------------------------------------------------------------------ */
 /* Advertising — remote/BUILD_SPEC.md §8.2                                   */
@@ -330,6 +472,7 @@ int link_init(const struct provisioning_record *prov, struct k_work_q *workq)
 	int err;
 
 	link_workq = workq;
+	k_work_init(&link_evt_work, link_evt_work_handler);
 
 	memset(identity_buf, 0, sizeof(identity_buf));
 	identity_buf[0] = 1; /* radio_proto_major */

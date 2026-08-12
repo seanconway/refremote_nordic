@@ -20,18 +20,20 @@
  * directly; CONFIG_BT_SMP stays compiled in only so pairing requests can be
  * rejected rather than silently accepted (Kconfig.dongle_radio).
  *
- * KNOWN GAP, recorded rather than silently shipped: radio.h's own doc
- * comment promises every callback runs "on the workqueue handed to
- * radio_init(), never on the Bluetooth RX thread" — that is what preserves
- * engine.c's one-producer, no-locking invariant (engine.h) once the radio is
- * a second event source. This file does not yet honour it: bt_conn_cb and
- * GATT callbacks below call straight into callbacks->on_*() from whatever
- * context Zephyr's BT host dispatches them on, not marshalled onto
- * radio_workq first. The exposure is real but low-frequency — connection
- * lifecycle events, not the press/haptic path, which is itself protected by
- * BUILD_SPEC §6.3 mechanism 1 running inside engine.c before this file is
- * ever called. Fix before soak testing (PLAN.md §3.1 stage 5): wrap each
- * callback site in a k_work submission to radio_workq.
+ * THREADING: every bt_conn_cb and every GATT client callback below runs on
+ * whatever thread Zephyr's BT host dispatches it on, never on radio_workq —
+ * and radio.h's own doc comment promises callbacks reach the application "on
+ * the workqueue handed to radio_init(), never on the Bluetooth RX thread",
+ * because that is what preserves engine.c's one-producer, no-locking
+ * invariant (engine.h) once the radio is a second event source. None of the
+ * callbacks below touch struct remote_state, or call callbacks->on_*(),
+ * directly: each copies out the small, short-lived data it was handed into a
+ * struct bt_evt, pushes it onto bt_evtq, and submits the single static
+ * bt_evt_work to radio_workq. bt_evt_work drains the queue and does the
+ * actual state mutation and callbacks->on_*() calls there — the same
+ * "copy in the callback, do the work on the queue" split usb_link.c already
+ * uses for the USB RX path (its rx_rb + rx_work), so radio_workq ends up
+ * exactly as single-producer as engine_q already assumes.
  */
 #include "radio.h"
 #include "rframe.h"
@@ -149,6 +151,93 @@ static void diag(struct remote_state *rs, const char *text)
 	if (callbacks->on_diag) {
 		callbacks->on_diag(rs->which, text);
 	}
+}
+
+/* ------------------------------------------------------------------------ */
+/* BT-thread -> radio_workq event marshaling                                 */
+/*                                                                            */
+/* Sized for 8 pending events: generous relative to how these actually
+ * arrive. The connection-lifecycle ones are inherently one-in-flight-at-a-
+ * time per remote — each step only produces its callback after the previous
+ * one's handler (below) issued the next request — and even a receive burst
+ * on RR_UPLINK's notify path is bounded by the controller's own connection
+ * event cadence at 7.5 ms. A full queue drops the event and counts it rather
+ * than block the BT host thread — fail closed, CLAUDE.md §4.4.
+ *
+ * BT_EVT_CONNECTED/DISCONNECTED/SECURITY_CHANGED carry a ref'd conn rather
+ * than a resolved remote_state *: resolving which remote a bt_conn belongs to
+ * means comparing against remotes[i].conn, and that field is now written
+ * exclusively on radio_workq, so the comparison itself has to happen there
+ * too rather than back on the BT thread. The GATT client callbacks
+ * (discover/read/subscribe) skip that lookup entirely — their params structs
+ * are embedded fields of struct remote_state, so CONTAINER_OF gives the
+ * correct remote_state * directly, and that pointer is static-array memory,
+ * always valid to hand across threads by value.
+ */
+enum bt_evt_type {
+	BT_EVT_CONNECTED,
+	BT_EVT_DISCONNECTED,
+	BT_EVT_SECURITY_CHANGED,
+	BT_EVT_DISCOVER,
+	BT_EVT_IDENTITY_READ,
+	BT_EVT_SUBSCRIBED,
+	BT_EVT_NOTIFY,
+};
+
+struct bt_evt {
+	enum bt_evt_type type;
+	struct bt_conn *conn;     /* ref'd by the shim, unref'd once the dispatcher
+				   * has run the handler; NULL for the
+				   * CONTAINER_OF-resolved events below */
+	struct remote_state *rs;  /* set instead of conn for discover/identity/
+				   * subscribe/notify events */
+	union {
+		struct {
+			uint8_t err;
+		} connected;
+		struct {
+			bt_security_t level;
+			enum bt_security_err err;
+		} security;
+		struct {
+			enum bt_gatt_discover_type phase;
+			bool found;
+			uint16_t handle;
+			int which; /* CHARACTERISTIC phase only: 0=unmatched,
+				    * 1=identity, 2=uplink, 3=downlink — the
+				    * UUID compare itself runs synchronously in
+				    * discover_cb against const tables, so only
+				    * the result needs to cross threads */
+		} discover;
+		struct {
+			uint8_t err;
+			uint8_t data[20];
+			uint16_t length;
+		} identity;
+		struct {
+			uint8_t err;
+		} subscribed;
+		struct {
+			uint8_t data[RFRAME_MAX_LEN];
+			uint16_t length;
+		} notify;
+	};
+};
+
+K_MSGQ_DEFINE(bt_evtq, sizeof(struct bt_evt), 8, 4);
+static struct k_work bt_evt_work;
+static uint32_t bt_evt_drops;
+
+static void bt_evt_post(const struct bt_evt *evt)
+{
+	if (k_msgq_put(&bt_evtq, evt, K_NO_WAIT) != 0) {
+		bt_evt_drops++;
+		if (evt->conn != NULL) {
+			bt_conn_unref(evt->conn);
+		}
+		return;
+	}
+	(void)k_work_submit_to_queue(radio_workq, &bt_evt_work);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -294,56 +383,10 @@ static void fail_connection(struct remote_state *rs, const char *why, const char
 
 static void start_subscribe(struct remote_state *rs);
 
-static uint8_t identity_read_cb(struct bt_conn *conn, uint8_t err,
-				struct bt_gatt_read_params *params,
-				const void *data, uint16_t length)
-{
-	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, read);
-	const uint8_t *id;
-	char serial[13];
-
-	ARG_UNUSED(conn);
-
-	if (err || data == NULL || length < 20) {
-		fail_connection(rs, "RR_IDENTITY read failed", NULL);
-		return BT_GATT_ITER_STOP;
-	}
-
-	id = data;
-	memcpy(rs->identity_buf, id, 20);
-
-	/* A14: a major mismatch is a refusal to operate, not a degraded mode
-	 * (RP §16). Minor mismatches are tolerated by design — nothing here
-	 * currently varies by minor version. */
-	if (id[0] != 1) {
-		fail_connection(rs, "RR_IDENTITY proto major mismatch",
-				"REMOTE_PROTO_MISMATCH");
-		return BT_GATT_ITER_STOP;
-	}
-
-	/* A13: set_serial is a second lock on a door §10.3's key already
-	 * bolts — a mismatch here is a bench fault (a unit provisioned for a
-	 * different set), not a security event. */
-	memcpy(serial, &id[8], 12);
-	serial[12] = '\0';
-	/* provisioning_record.set_serial is not available here by design —
-	 * radio.h passes only the association parameters, not the whole
-	 * record, and RP §10.1's provisioning check already ran at boot. The
-	 * comparison against *our* set_serial is deferred to engine.c, which
-	 * holds it; report the identity onward via on_diag and let a future
-	 * revision wire a proper comparison callback if a real mismatch is
-	 * ever observed on the bench. Recorded rather than silently skipped.
-	 */
-
-	start_subscribe(rs);
-	return BT_GATT_ITER_STOP;
-}
-
 static void start_read_identity(struct remote_state *rs)
 {
 	int err;
 
-	rs->read.func = identity_read_cb;
 	rs->read.handle_count = 1;
 	rs->read.single.handle = rs->identity_handle;
 	rs->read.single.offset = 0;
@@ -354,64 +397,11 @@ static void start_read_identity(struct remote_state *rs)
 	}
 }
 
-static uint8_t discover_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-			   struct bt_gatt_discover_params *params)
-{
-	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, discover);
-	int err;
-
-	if (attr == NULL) {
-		/* PRIMARY exhausted with no match: the service was not found. */
-		if (rs->discover.type == BT_GATT_DISCOVER_PRIMARY) {
-			fail_connection(rs, "RefRemote Link Service not found", NULL);
-			return BT_GATT_ITER_STOP;
-		}
-		/* CHARACTERISTIC exhausted. */
-		if (rs->identity_handle == 0 || rs->uplink_value_handle == 0 ||
-		    rs->downlink_handle == 0) {
-			fail_connection(rs, "RefRemote characteristic missing", NULL);
-			return BT_GATT_ITER_STOP;
-		}
-		start_read_identity(rs);
-		return BT_GATT_ITER_STOP;
-	}
-
-	if (rs->discover.type == BT_GATT_DISCOVER_PRIMARY) {
-		rs->discover.uuid = NULL; /* enumerate every characteristic that follows */
-		rs->discover.start_handle = attr->handle + 1;
-		rs->discover.type = BT_GATT_DISCOVER_CHARACTERISTIC;
-		rs->discover.func = discover_cb;
-
-		err = bt_gatt_discover(conn, &rs->discover);
-		if (err) {
-			fail_connection(rs, "characteristic discovery failed to queue", NULL);
-		}
-		return BT_GATT_ITER_STOP;
-	}
-
-	if (rs->discover.type == BT_GATT_DISCOVER_CHARACTERISTIC) {
-		const struct bt_gatt_chrc *chrc = attr->user_data;
-
-		if (!bt_uuid_cmp(chrc->uuid, &uuid_identity.uuid)) {
-			rs->identity_handle = chrc->value_handle;
-		} else if (!bt_uuid_cmp(chrc->uuid, &uuid_uplink.uuid)) {
-			rs->uplink_value_handle = chrc->value_handle;
-			rs->uplink_ccc_handle = (uint16_t)(chrc->value_handle + 1);
-		} else if (!bt_uuid_cmp(chrc->uuid, &uuid_downlink.uuid)) {
-			rs->downlink_handle = chrc->value_handle;
-		}
-		return BT_GATT_ITER_CONTINUE;
-	}
-
-	return BT_GATT_ITER_STOP;
-}
-
 static void start_discovery(struct remote_state *rs)
 {
 	int err;
 
 	rs->discover.uuid = &uuid_service.uuid;
-	rs->discover.func = discover_cb;
 	rs->discover.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE;
 	rs->discover.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE;
 	rs->discover.type = BT_GATT_DISCOVER_PRIMARY;
@@ -422,37 +412,129 @@ static void start_discovery(struct remote_state *rs)
 	}
 }
 
-/* ------------------------------------------------------------------------ */
-/* RR_UPLINK subscription and notifications                                  */
-/* ------------------------------------------------------------------------ */
+/* Everything discover_cb/identity_read_cb/subscribe_cb/uplink_notify_cb used
+ * to do inline now lives here, run only from bt_evt_work on radio_workq. */
 
-static uint8_t uplink_notify_cb(struct bt_conn *conn,
-				struct bt_gatt_subscribe_params *params,
-				const void *data, uint16_t length)
+static void handle_discover(struct remote_state *rs, enum bt_gatt_discover_type phase,
+			    bool found, uint16_t handle, int which)
 {
-	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, subscribe);
+	int err;
+
+	if (!found) {
+		if (phase == BT_GATT_DISCOVER_PRIMARY) {
+			fail_connection(rs, "RefRemote Link Service not found", NULL);
+			return;
+		}
+		/* CHARACTERISTIC exhausted. */
+		if (rs->identity_handle == 0 || rs->uplink_value_handle == 0 ||
+		    rs->downlink_handle == 0) {
+			fail_connection(rs, "RefRemote characteristic missing", NULL);
+			return;
+		}
+		start_read_identity(rs);
+		return;
+	}
+
+	if (phase == BT_GATT_DISCOVER_PRIMARY) {
+		rs->discover.uuid = NULL; /* enumerate every characteristic that follows */
+		rs->discover.start_handle = (uint16_t)(handle + 1);
+		rs->discover.type = BT_GATT_DISCOVER_CHARACTERISTIC;
+
+		err = bt_gatt_discover(rs->conn, &rs->discover);
+		if (err) {
+			fail_connection(rs, "characteristic discovery failed to queue", NULL);
+		}
+		return;
+	}
+
+	/* CHARACTERISTIC: record a match, then step past it and keep looking.
+	 * discover_cb always returns STOP (see its own comment), so each hop
+	 * is a fresh bt_gatt_discover() issued from here rather than Zephyr's
+	 * own CONTINUE-driven sweep — that is what lets the whole chain run
+	 * on radio_workq instead of the BT host thread. */
+	switch (which) {
+	case 1:
+		rs->identity_handle = handle;
+		break;
+	case 2:
+		rs->uplink_value_handle = handle;
+		rs->uplink_ccc_handle = (uint16_t)(handle + 1);
+		break;
+	case 3:
+		rs->downlink_handle = handle;
+		break;
+	default:
+		break;
+	}
+
+	rs->discover.start_handle = (uint16_t)(handle + 1);
+	err = bt_gatt_discover(rs->conn, &rs->discover);
+	if (err) {
+		fail_connection(rs, "characteristic discovery failed to queue", NULL);
+	}
+}
+
+static void handle_identity_read(struct remote_state *rs, uint8_t err,
+				 const uint8_t *data, uint16_t length)
+{
+	if (err || length < 20) {
+		fail_connection(rs, "RR_IDENTITY read failed", NULL);
+		return;
+	}
+
+	memcpy(rs->identity_buf, data, 20);
+
+	/* A14: a major mismatch is a refusal to operate, not a degraded mode
+	 * (RP §16). Minor mismatches are tolerated by design — nothing here
+	 * currently varies by minor version. */
+	if (data[0] != 1) {
+		fail_connection(rs, "RR_IDENTITY proto major mismatch",
+				"REMOTE_PROTO_MISMATCH");
+		return;
+	}
+
+	/* A13: set_serial is a second lock on a door §10.3's key already
+	 * bolts — a mismatch here is a bench fault (a unit provisioned for a
+	 * different set), not a security event. provisioning_record.set_serial
+	 * is not available here by design — radio.h passes only the
+	 * association parameters, not the whole record, and RP §10.1's
+	 * provisioning check already ran at boot. The comparison against
+	 * *our* set_serial (identity_buf[8..20)) is deferred to a future
+	 * revision if a real mismatch is ever observed on the bench. Recorded
+	 * rather than silently skipped.
+	 */
+
+	start_subscribe(rs);
+}
+
+static void handle_subscribed(struct remote_state *rs, uint8_t err)
+{
+	if (err) {
+		fail_connection(rs, "RR_UPLINK subscribe failed", NULL);
+		return;
+	}
+
+	rframe_ctr_init(&rs->ctr);
+	report_ready(rs);
+}
+
+static void handle_notify(struct remote_state *rs, const uint8_t *data, uint16_t length)
+{
 	struct rframe_msg msg;
 	enum rframe_decode_status st;
-
-	ARG_UNUSED(conn);
-
-	if (data == NULL) {
-		/* Subscription removed (disconnect tears this down anyway). */
-		return BT_GATT_ITER_STOP;
-	}
 
 	st = rframe_decode(data, length, &msg);
 	switch (st) {
 	case RFRAME_ERR_UNKNOWN_TYPE:
 		/* A2: ignore silently. Forward compatibility depends on it. */
-		return BT_GATT_ITER_CONTINUE;
+		return;
 	case RFRAME_ERR_LENGTH:
 	case RFRAME_ERR_FIELD:
 		/* A1/A3: ignore, log. No aggregate counter exists for this path
 		 * — it is the malformed-frame case, not the CTR gap/duplicate
 		 * case BUILD_SPEC §8 stages counters for. */
 		diag(rs, "malformed uplink frame");
-		return BT_GATT_ITER_CONTINUE;
+		return;
 	default:
 		break;
 	}
@@ -464,7 +546,7 @@ static uint8_t uplink_notify_cb(struct bt_conn *conn,
 		if (callbacks->on_ready) {
 			callbacks->on_ready(rs->which);
 		}
-		return BT_GATT_ITER_CONTINUE;
+		return;
 	}
 
 	/* Every other uplink frame shares the one per-connection CTR sequence
@@ -480,7 +562,7 @@ static uint8_t uplink_notify_cb(struct bt_conn *conn,
 			if (callbacks->on_dup) {
 				callbacks->on_dup(rs->which);
 			}
-			return BT_GATT_ITER_CONTINUE;
+			return;
 		}
 		if (cr == RFRAME_CTR_GAP && callbacks->on_gap) {
 			/* A5: accepted regardless — the event below is not
@@ -516,7 +598,87 @@ static uint8_t uplink_notify_cb(struct bt_conn *conn,
 	default:
 		break;
 	}
+}
 
+static uint8_t discover_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			   struct bt_gatt_discover_params *params)
+{
+	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, discover);
+	struct bt_evt evt = { .type = BT_EVT_DISCOVER, .rs = rs };
+
+	ARG_UNUSED(conn);
+
+	/* Reading rs->discover.type here, rather than writing it, is safe:
+	 * nothing writes it except handle_discover() below, and that only
+	 * runs after this exact callback has already returned — the chain is
+	 * strictly one hop in flight at a time per remote. */
+	evt.discover.phase = rs->discover.type;
+
+	if (attr == NULL) {
+		evt.discover.found = false;
+	} else if (rs->discover.type == BT_GATT_DISCOVER_PRIMARY) {
+		evt.discover.found = true;
+		evt.discover.handle = attr->handle;
+	} else {
+		const struct bt_gatt_chrc *chrc = attr->user_data;
+
+		evt.discover.found = true;
+		evt.discover.handle = chrc->value_handle;
+		if (!bt_uuid_cmp(chrc->uuid, &uuid_identity.uuid)) {
+			evt.discover.which = 1;
+		} else if (!bt_uuid_cmp(chrc->uuid, &uuid_uplink.uuid)) {
+			evt.discover.which = 2;
+		} else if (!bt_uuid_cmp(chrc->uuid, &uuid_downlink.uuid)) {
+			evt.discover.which = 3;
+		}
+	}
+
+	bt_evt_post(&evt);
+
+	/* Always STOP: handle_discover() re-issues bt_gatt_discover() for the
+	 * next hop itself, rather than relying on Zephyr's CONTINUE-driven
+	 * sweep, so nothing here decides based on state only radio_workq now
+	 * owns. */
+	return BT_GATT_ITER_STOP;
+}
+
+static uint8_t identity_read_cb(struct bt_conn *conn, uint8_t err,
+				struct bt_gatt_read_params *params,
+				const void *data, uint16_t length)
+{
+	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, read);
+	struct bt_evt evt = { .type = BT_EVT_IDENTITY_READ, .rs = rs };
+
+	ARG_UNUSED(conn);
+
+	evt.identity.err = err;
+	evt.identity.length = MIN(length, sizeof(evt.identity.data));
+	if (data != NULL && evt.identity.length > 0) {
+		memcpy(evt.identity.data, data, evt.identity.length);
+	}
+
+	bt_evt_post(&evt);
+	return BT_GATT_ITER_STOP;
+}
+
+static uint8_t uplink_notify_cb(struct bt_conn *conn,
+				struct bt_gatt_subscribe_params *params,
+				const void *data, uint16_t length)
+{
+	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, subscribe);
+	struct bt_evt evt = { .type = BT_EVT_NOTIFY, .rs = rs };
+
+	ARG_UNUSED(conn);
+
+	if (data == NULL) {
+		/* Subscription removed (disconnect tears this down anyway). */
+		return BT_GATT_ITER_STOP;
+	}
+
+	evt.notify.length = MIN(length, sizeof(evt.notify.data));
+	memcpy(evt.notify.data, data, evt.notify.length);
+
+	bt_evt_post(&evt);
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -524,16 +686,12 @@ static void subscribe_cb(struct bt_conn *conn, uint8_t err,
 			 struct bt_gatt_subscribe_params *params)
 {
 	struct remote_state *rs = CONTAINER_OF(params, struct remote_state, subscribe);
+	struct bt_evt evt = { .type = BT_EVT_SUBSCRIBED, .rs = rs };
 
 	ARG_UNUSED(conn);
 
-	if (err) {
-		fail_connection(rs, "RR_UPLINK subscribe failed", NULL);
-		return;
-	}
-
-	rframe_ctr_init(&rs->ctr);
-	report_ready(rs);
+	evt.subscribed.err = err;
+	bt_evt_post(&evt);
 }
 
 static void start_subscribe(struct remote_state *rs)
@@ -559,14 +717,9 @@ static void start_subscribe(struct remote_state *rs)
 /* bt_conn callbacks                                                         */
 /* ------------------------------------------------------------------------ */
 
-static void on_connected(struct bt_conn *conn, uint8_t err)
+static void handle_connected(struct remote_state *rs, uint8_t err)
 {
-	struct remote_state *rs = find_by_conn(conn);
 	int rc;
-
-	if (rs == NULL) {
-		return;
-	}
 
 	if (err) {
 		bt_conn_unref(rs->conn);
@@ -579,12 +732,12 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 
 	/* BUILD_SPEC §7.1 order: LTK, then raise security. No GATT operation
 	 * happens before security_changed() confirms encryption. */
-	rc = bt_nrf_conn_set_ltk(conn, &set_ltk, true);
+	rc = bt_nrf_conn_set_ltk(rs->conn, &set_ltk, true);
 	if (rc) {
 		fail_connection(rs, "bt_nrf_conn_set_ltk failed", NULL);
 		return;
 	}
-	rc = bt_conn_set_security(conn, BT_SECURITY_L4);
+	rc = bt_conn_set_security(rs->conn, BT_SECURITY_L4);
 	if (rc) {
 		/* A12 territory: no valid key relationship possible. */
 		fail_connection(rs, "bt_conn_set_security failed", NULL);
@@ -593,19 +746,11 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 
 	/* Best-effort; not on the encrypted-before-GATT critical path. RP §11
 	 * requires 2M on both connections for the density argument. */
-	(void)bt_conn_le_phy_update(conn, BT_CONN_LE_PHY_PARAM_2M);
+	(void)bt_conn_le_phy_update(rs->conn, BT_CONN_LE_PHY_PARAM_2M);
 }
 
-static void on_disconnected(struct bt_conn *conn, uint8_t reason)
+static void handle_disconnected(struct remote_state *rs)
 {
-	struct remote_state *rs = find_by_conn(conn);
-
-	ARG_UNUSED(reason);
-
-	if (rs == NULL) {
-		return;
-	}
-
 	(void)k_work_cancel_delayable(&rs->rssi_work);
 	rs->rssi_count = 0;
 	rs->rssi_next = 0;
@@ -629,12 +774,10 @@ static void on_disconnected(struct bt_conn *conn, uint8_t reason)
 	start_connect(rs);
 }
 
-static void on_security_changed(struct bt_conn *conn, bt_security_t level,
-				enum bt_security_err err)
+static void handle_security_changed(struct remote_state *rs, bt_security_t level,
+				    enum bt_security_err err)
 {
-	struct remote_state *rs = find_by_conn(conn);
-
-	if (rs == NULL || rs->phase != PHASE_CONNECTING) {
+	if (rs->phase != PHASE_CONNECTING) {
 		return;
 	}
 
@@ -649,11 +792,92 @@ static void on_security_changed(struct bt_conn *conn, bt_security_t level,
 	start_discovery(rs);
 }
 
+static void on_connected(struct bt_conn *conn, uint8_t err)
+{
+	struct bt_evt evt = { .type = BT_EVT_CONNECTED, .conn = bt_conn_ref(conn) };
+
+	evt.connected.err = err;
+	bt_evt_post(&evt);
+}
+
+static void on_disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	struct bt_evt evt = { .type = BT_EVT_DISCONNECTED, .conn = bt_conn_ref(conn) };
+
+	ARG_UNUSED(reason);
+	bt_evt_post(&evt);
+}
+
+static void on_security_changed(struct bt_conn *conn, bt_security_t level,
+				enum bt_security_err err)
+{
+	struct bt_evt evt = { .type = BT_EVT_SECURITY_CHANGED, .conn = bt_conn_ref(conn) };
+
+	evt.security.level = level;
+	evt.security.err = err;
+	bt_evt_post(&evt);
+}
+
 static struct bt_conn_cb conn_callbacks = {
 	.connected = on_connected,
 	.disconnected = on_disconnected,
 	.security_changed = on_security_changed,
 };
+
+/* ------------------------------------------------------------------------ */
+/* bt_evt dispatcher                                                         */
+/* ------------------------------------------------------------------------ */
+
+static void bt_evt_work_handler(struct k_work *work)
+{
+	struct bt_evt evt;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&bt_evtq, &evt, K_NO_WAIT) == 0) {
+		struct remote_state *rs = evt.rs;
+
+		if (evt.conn != NULL) {
+			/* Only radio_workq writes remotes[i].conn now (see the
+			 * marshaling section's comment above), so this
+			 * comparison is safe here and would not have been on
+			 * the BT thread. */
+			rs = find_by_conn(evt.conn);
+		}
+
+		if (rs != NULL) {
+			switch (evt.type) {
+			case BT_EVT_CONNECTED:
+				handle_connected(rs, evt.connected.err);
+				break;
+			case BT_EVT_DISCONNECTED:
+				handle_disconnected(rs);
+				break;
+			case BT_EVT_SECURITY_CHANGED:
+				handle_security_changed(rs, evt.security.level, evt.security.err);
+				break;
+			case BT_EVT_DISCOVER:
+				handle_discover(rs, evt.discover.phase, evt.discover.found,
+						evt.discover.handle, evt.discover.which);
+				break;
+			case BT_EVT_IDENTITY_READ:
+				handle_identity_read(rs, evt.identity.err, evt.identity.data,
+						     evt.identity.length);
+				break;
+			case BT_EVT_SUBSCRIBED:
+				handle_subscribed(rs, evt.subscribed.err);
+				break;
+			case BT_EVT_NOTIFY:
+				handle_notify(rs, evt.notify.data, evt.notify.length);
+				break;
+			}
+		}
+
+		if (evt.conn != NULL) {
+			bt_conn_unref(evt.conn);
+		}
+	}
+}
 
 /* ------------------------------------------------------------------------ */
 /* Public interface (radio.h)                                                */
@@ -666,6 +890,7 @@ int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
 
 	callbacks = cb;
 	radio_workq = workq;
+	k_work_init(&bt_evt_work, bt_evt_work_handler);
 
 	if (prov == NULL) {
 		/* A19: do not initiate, do not advertise. Nothing further to do —
@@ -725,6 +950,9 @@ int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
 		rs->which = (enum proto_remote)r;
 		rs->peer_addr.type = BT_ADDR_LE_RANDOM;
 		memcpy(rs->peer_addr.a.val, prov->peer_addr[r], PROVISIONING_ADDR_LEN);
+
+		rs->discover.func = discover_cb;
+		rs->read.func = identity_read_cb;
 
 		k_work_init_delayable(&rs->rssi_work, rssi_work_handler);
 		k_work_init_delayable(&rs->disconnect_debounce, disconnect_debounce_handler);
