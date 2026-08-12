@@ -4,3 +4,5 @@ build*/
 # the MinGW-w64 form on this machine.
 tests/**/test_protocol
 tests/**/test_protocol.exe
+tests/**/test_provisioning
+tests/**/test_provisioning.exe

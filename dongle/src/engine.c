@@ -3,6 +3,7 @@
 #include "usb_link.h"
 #include "indicator.h"
 #include "radio.h"
+#include "provisioning_flash.h"
 
 #include <zephyr/kernel.h>
 
@@ -11,6 +12,15 @@
 
 #define FW_VERSION           "0.2.0"
 #define CAPS                 0u
+
+/* Reported in HELLO's <set> field only when provisioning is absent or
+ * corrupt — BUILD_SPEC.md §9. Deliberately not a plausible serial: the app
+ * displays this for the referee's pre-match check against the label on the
+ * hardware (PROTOCOL.md §4.1, FS §12.3), and a placeholder that looked real
+ * would pass that check silently. A live ERR NO_PROVISIONING already fired
+ * at boot for the same condition (engine_start()), so this is what a human
+ * sees on the screen, not the only signal of the fault. */
+#define UNPROVISIONED_SET_SERIAL "RR-0000"
 
 /* ------------------------------------------------------------------------ */
 /* Timing constants — BUILD_SPEC §4.1.                                       */
@@ -62,6 +72,13 @@ static bool supervision_suspended;
  * believe an app is there, and telling the remotes otherwise would render
  * LED_LINK lit over a link that does not exist. */
 static bool host_up;
+
+/* Set once at boot by engine_start() and never re-read from flash after —
+ * BUILD_SPEC.md §9 defines no field procedure for re-provisioning, and a
+ * record that changed under a running unit is not a case anything here needs
+ * to handle. */
+static bool provisioned;
+static struct provisioning_record prov;
 
 static uint16_t tx_seq;
 
@@ -129,14 +146,9 @@ static bool valid_remote(enum proto_remote r)
 static void send_hello(void)
 {
 	char buf[PROTO_MAX_LINE];
+	const char *set_serial = provisioned ? prov.set_serial : UNPROVISIONED_SET_SERIAL;
 
-	/* The set serial is a Kconfig placeholder until the provisioning record
-	 * exists (Stage 2). It is displayed by the app for the referee's
-	 * pre-match check against the label on the hardware (§4.1), so a
-	 * placeholder that looks like a real serial is the wrong kind of
-	 * wrong — the default is RR-0000 for that reason. */
-	if (proto_enc_hello(buf, sizeof(buf), FW_VERSION,
-			    CONFIG_DONGLE_SET_SERIAL_FALLBACK, CAPS) > 0) {
+	if (proto_enc_hello(buf, sizeof(buf), FW_VERSION, set_serial, CAPS) > 0) {
 		(void)usb_link_send(buf);
 	}
 }
@@ -943,6 +955,29 @@ void engine_start(void)
 	/* k_uptime_get() is still near zero here, so it would seed every boot
 	 * identically; the cycle counter has actually moved. */
 	rng_state = k_cycle_get_32() | 1u;
+
+	/*
+	 * Read before anything else touches the wire: HELLO's <set> field
+	 * below, and — from Stage 3 — radio_init()'s association parameters,
+	 * both come from this. BUILD_SPEC.md §9: on any failure the unit
+	 * still runs the USB side of the protocol (there is no advertise or
+	 * initiate to refuse yet with CONFIG_DONGLE_RADIO=n) but the fault is
+	 * reported once, so a bench technician sees it rather than a dongle
+	 * that looks fine and silently reports the wrong set.
+	 */
+	{
+		enum provisioning_status st = provisioning_load(&prov);
+
+		provisioned = (st == PROVISIONING_OK);
+		if (!provisioned) {
+			char text[48];
+
+			(void)snprintf(text, sizeof(text), "unprovisioned: %s",
+				       provisioning_status_str(st));
+			send_log(text);
+			send_err("NO_PROVISIONING");
+		}
+	}
 
 	if (radio_init(&radio_callbacks, &engine_q) != 0) {
 		send_err("RADIO_INIT_FAILED");

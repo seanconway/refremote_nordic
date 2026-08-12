@@ -49,18 +49,6 @@ config DONGLE_CONN_INTERVAL_UNITS
 	  scheduling needs a common factor between them or their events
 	  collide.
 
-config DONGLE_SET_SERIAL_FALLBACK
-	string "Officiating set serial used before provisioning exists"
-	default "RR-0000"
-	help
-	  Reported in the fourth field of HELLO until the provisioning
-	  record is read from flash (Stage 2), after which this is removed.
-
-	  The default is deliberately not plausible. The app displays this
-	  value for the referee's pre-match check against the label on the
-	  hardware (PROTOCOL.md §4.1, FS §12.3), and a placeholder that
-	  looked like a real serial would pass that check.
-
 endmenu
 
 source "Kconfig.zephyr"

@@ -8,7 +8,13 @@ target_sources(app PRIVATE
   src/usb_link.c
   src/engine.c
   src/indicator.c
+  src/provisioning_flash.c
+  ../common/provisioning.c
 )
+
+# Stage 2 (BUILD_SPEC.md §9): the record's shape lives in ../common, shared
+# unchanged with the remote firmware, so it is not duplicated under src/.
+target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
 
 # Exactly one implementation of radio.h is compiled in. Selecting neither would
 # fail at link time with an undefined-reference list rather than a sentence, so

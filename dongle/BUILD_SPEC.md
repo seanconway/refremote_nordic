@@ -439,13 +439,22 @@ Emitted as a `LOG` line on handshake, together with the connection interval in u
 
 ## 9. Provisioning
 
-Built for real at Stage 2, with a bench tool rather than a manufacturing process.
+Built for real at Stage 2, with a bench tool rather than a manufacturing process. **Code-complete 2026-08-12.**
 
 Record per RP §10.1, 55 bytes: `magic`, `version`, `set_serial[12]`, `role`, `own_addr[6]`, `peer_addr[2][6]`, `set_key[16]`, `crc32`. Stored in **`storage_partition` — 16 KB at `0xf0000`** on this board, which sits below the nRF5 bootloader and survives an application reflash, so a re-flashed dongle does not need re-provisioning.
 
 On boot: read, verify CRC, validate `role` and `set_serial`. **On any failure or absence, do not initiate, do not advertise, render the fault, and emit `ERR NO_PROVISIONING`** (A19). There is no safe default for *which set am I in*.
 
 `../tools/provision.py` generates three records per set — dongle, RED, GREEN — from a serial, with random static-random addresses and a random 16-byte key, emitting three hex files and a human-readable manifest. No dependencies; write Intel HEX directly.
+
+**Layout, split like `protocol.c`.** `common/provisioning.h`/`.c` is the Zephyr-free record struct, CRC and validation — no board, no SDK, host-tested at `dongle/tests/provisioning` (`make check`, 54 checks). `dongle/src/provisioning_flash.c` is the only Zephyr-specific part: it opens `storage_partition` via `flash_area_open(FIXED_PARTITION_ID(storage_partition), ...)`, reads the raw bytes, and additionally requires `role == DONGLE` — a record provisioned for a remote and flashed onto a dongle by mistake is the same class of manufacturing error as a bad CRC, not a case to let through. `engine_start()` calls it before the first `HELLO`; on failure it logs the specific reason (`provisioning_status_str()`) then emits `ERR NO_PROVISIONING`, and `HELLO`'s `<set>` field falls back to the fixed, deliberately-implausible `RR-0000` — the same reasoning the retired `CONFIG_DONGLE_SET_SERIAL_FALLBACK` Kconfig option carried, now permanent rather than a placeholder-until-Stage-2.
+
+**Two things RP §10.1 leaves to the implementation, pinned in `common/provisioning.h` because a reader and `provision.py` that disagree on either produce a record that looks fine and is silently unreadable** — exactly the two-implementation-drift trap CLAUDE.md §2 already names for `PROTOCOL.md`:
+
+- The role enum's numeric values (`DONGLE=0`, `RED=1`, `GREEN=2`) and the magic/version split (`0x5252` "RR", version `1`, 2 bytes each).
+- The CRC32 variant: the ubiquitous "CRC-32" — poly `0xEDB88320` (reflected), init/xorout `0xFFFFFFFF`, same as zlib/PNG/gzip/Ethernet FCS — computed over every byte except the `crc32` field itself. `provision.py` uses `zlib.crc32` rather than reimplementing it, for the same drift reason. Both sides are checked against the standard test vector, `CRC-32("123456789") == 0xCBF43926`.
+
+**Verified so far:** the host suite (54 checks: valid record, all three roles, erased-flash-reads-as-absent, bad version, single-bit-flip CRC catch, `set_serial` charset and NUL-padding, bad role, full field fidelity, and that a failed parse leaves the output untouched); a byte-for-byte cross-check of `provision.py`'s Intel HEX output through the same parser (a generated record round-trips correctly and the address/serial fields come back unchanged); and a clean `west build` of the no-radio baseline with the new module linked in. **Not yet run: on hardware.** Writing a `provision.py` record onto a real dongle and observing `HELLO`'s `<set>` field and a boot-time `ERR NO_PROVISIONING` on an unprovisioned one are manual rungs, not yet exercised — `PLAN.md` §5 is where those get tracked. Also not yet possible: the remote half of "on both boards" (this row's acceptance criterion) needs remote firmware, which is Stage 4.
 
 **Why not a `#define`-ed key.** It is faster and it makes A12, A13 and A19 untestable — three of the four cases standing between this product and a cross-associated match at a multi-mat event, which FS §2.3 classes as a scoring-integrity failure rather than an inconvenience. It also makes the refuse-to-operate path something added after the fact, which is to say a boot path nothing ever exercised.
 

@@ -11,6 +11,8 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 
 > **The no-radio baseline (V0–V6) is closed.** The application has held the port repeatedly, the handshake, the reverse path, supervision/disconnection, and reconnect all check out on hardware. A few rows are carried forward rather than chased — burst suppression, the remote-render half of supervision, a scripted 10× reconnect, and a dongle-swap test — each needs either hardware that doesn't exist yet or scripting rather than manual observation; see `PLAN.md` §5, §9.2. `PLAN.md` §3.10 lists the ways adding the radio layer can regress this link without touching any USB code.
 
+> **Stage 2 (provisioning) is code-complete but not yet flashed** — `BUILD_SPEC.md` §9. The source tree is ahead of the 0.2.0 image on the physical dongle: `HELLO`'s `<set>` field and `ERR NO_PROVISIONING` behave as specified in the host suite (54 checks) and against a real `provision.py` record decoded byte-for-byte back through the parser, and `west build` is clean, but nobody has written a record to a real board's `storage_partition` yet or watched `INFO` report it.
+
 ## Layout
 
 | File | Role |
@@ -21,11 +23,15 @@ Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB 
 | `src/radio.h` | The seam. One interface, two build-time implementations. No code. |
 | `src/radio_null.c` | `CONFIG_DONGLE_RADIO=n`: nothing connected, downlink on the LEDs. **Permanent, not scaffolding.** |
 | `src/indicator.c/.h` | LED stand-in for the remote haptics and indicators. **One blue lamp for both remotes** — see [`BOARD.md`](BOARD.md) §2. |
+| `src/provisioning_flash.c/.h` | Stage 2. Reads `storage_partition`, hands the raw bytes to `../common/provisioning.c`. The only Zephyr-specific part of provisioning. |
+| `../common/provisioning.h/.c` | The provisioning record — struct, CRC32, validation. **No Zephyr dependencies**, host-tested, shared unchanged with the remote firmware once it exists. |
 | `tests/protocol/` | Host unit tests for `PROTOCOL.md` §14. |
+| `tests/provisioning/` | Host unit tests for `../common/provisioning.c` — 54 checks. |
+| `tools/provision.py` | Bench tool: generates a set's three provisioning records (dongle, RED, GREEN) as Intel HEX plus a manifest. No dependencies. |
 | `tools/hostenv.sh` | Puts a **host** compiler on `PATH` for the above. Not interchangeable with `ncsenv.sh`. |
 | [`BOARD.md`](BOARD.md) | **Hardware reference** — LEDs, button, flash map, the REGOUT0 reset. Facts not derivable from the firmware. |
 
-Still to arrive, per [`BUILD_SPEC.md`](BUILD_SPEC.md) §2: `src/radio_ble.c` behind the seam (stage 3), and `../common/` carrying the radio frame codec and the provisioning record — both Zephyr-free, both shared with the remote firmware, both host-tested.
+Still to arrive, per [`BUILD_SPEC.md`](BUILD_SPEC.md) §2: `src/radio_ble.c` behind the seam, and `../common/rframe.c` for the radio frame codec — both stage 3, both Zephyr-free, both shared with the remote firmware, both host-tested.
 
 **The protocol owns the CDC-ACM port exclusively.** Console, shell and logging are disabled in `prj.conf`, and a `BUILD_ASSERT` in `usb_link.c` fails the build if a second CDC-ACM instance ever appears. Diagnostics leave the dongle as protocol `LOG` / `ERR` lines instead. See [`PLAN.md`](../PLAN.md) §4.4 for why — and for the consequence it has for radio bring-up, which is a decision to make before starting M3 rather than during it.
 
