@@ -3,10 +3,12 @@
 
 Generates the three provisioning records for one set (dongle, RED, GREEN) from
 a serial: random LE static-random addresses, a random shared set key, and the
-CRC32 dongle/src/provisioning_flash.c and remote firmware (from Stage 4) will
-check at boot. Writes each as an Intel HEX file targeting the storage
-partition (0xf0000, per dongle/BUILD_SPEC.md §9 and the board's own
-fstab-stock.dtsi), plus one human-readable manifest.
+CRC32 dongle/src/provisioning_flash.c and remote/src/prov_flash.c will check
+at boot. Writes each as an Intel HEX file targeting that board's storage
+partition — 0xf0000 (16 KB) for the dongle per dongle/BUILD_SPEC.md §9, and
+0xf8000 (32 KB) for RED/GREEN per remote/BUILD_SPEC.md §9, since the DK's
+stock devicetree partition sits at a different address than the dongle's —
+plus one human-readable manifest.
 
     python provision.py RR-0001
     python provision.py RR-0001 -o out/
@@ -52,6 +54,21 @@ ROLE_NAMES = {ROLE_DONGLE: "dongle", ROLE_RED: "red", ROLE_GREEN: "green"}
 
 # dongle/BUILD_SPEC.md §9: 16 KB at 0xf0000, below the nRF5 bootloader.
 STORAGE_PARTITION_BASE = 0xF0000
+
+# remote/BUILD_SPEC.md §9: 32 KB at 0xf8000 on the nrf52840dk — the DK's stock
+# nordic/nrf52840_partition.dtsi puts storage_partition at a different address
+# than the dongle's, so RED/GREEN hex files must target this instead of
+# STORAGE_PARTITION_BASE above. A hex written at the wrong address doesn't
+# corrupt anything on this board (0xf0000-0xf8000 sits below storage_partition
+# and above the application), but the remote would still read as unprovisioned
+# — silently, since nothing at 0xf8000 was ever written.
+REMOTE_STORAGE_PARTITION_BASE = 0xF8000
+
+STORAGE_PARTITION_BASE_BY_ROLE = {
+    ROLE_DONGLE: STORAGE_PARTITION_BASE,
+    ROLE_RED: REMOTE_STORAGE_PARTITION_BASE,
+    ROLE_GREEN: REMOTE_STORAGE_PARTITION_BASE,
+}
 
 SERIAL_RE = re.compile(r"^[A-Z0-9-]{1,%d}$" % SERIAL_LEN)
 
@@ -194,10 +211,11 @@ def main():
 
     filenames = {}
     for role in (ROLE_DONGLE, ROLE_RED, ROLE_GREEN):
+        base = STORAGE_PARTITION_BASE_BY_ROLE[role]
         fn = outdir / ("%s_%s.hex" % (args.serial, ROLE_NAMES[role]))
-        write_ihex(fn, STORAGE_PARTITION_BASE, records[role])
+        write_ihex(fn, base, records[role])
         filenames[role] = fn
-        print("wrote %s (%d bytes @ 0x%06X)" % (fn, len(records[role]), STORAGE_PARTITION_BASE))
+        print("wrote %s (%d bytes @ 0x%06X)" % (fn, len(records[role]), base))
 
     manifest = outdir / ("%s_manifest.txt" % args.serial)
     write_manifest(manifest, args.serial, addrs, set_key, filenames)
