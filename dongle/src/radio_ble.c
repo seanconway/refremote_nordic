@@ -20,6 +20,24 @@
  * directly; CONFIG_BT_SMP stays compiled in only so pairing requests can be
  * rejected rather than silently accepted (Kconfig.dongle_radio).
  *
+ * THE SHARED INITIATING SLOT: Zephyr's host allows exactly one outstanding
+ * bt_conn_le_create() system-wide — conn_le_create_common_checks() rejects a
+ * second call with -EALREADY regardless of which peer address it targets
+ * (zephyr/subsys/bluetooth/host/conn.c). Two remotes both wanting to connect
+ * at once (boot, or both dropping together) therefore cannot both search
+ * concurrently, and a search against an address that never advertises would
+ * otherwise hold the slot forever (RP §9.5 "the dongle never stops trying"),
+ * permanently starving the other remote even if it is present and
+ * advertising correctly. connect_owner/connect_yield below share that one
+ * slot fairly: only the remote actually running un-contested (the other one
+ * already connected, or not yet wanting a turn) gets to search unbounded, as
+ * RP §9.5 always intended; two remotes contending for the slot at once get
+ * bounded turns instead, handed off via bt_conn_disconnect() on the
+ * not-yet-connected bt_conn — which cancels the pending HCI Create
+ * Connection rather than tearing down a live link, so it never touches the
+ * OTHER remote's own (possibly already-established) connection. See
+ * start_connect(), connect_yield_handler(), advance_connect().
+ *
  * THREADING: every bt_conn_cb and every GATT client callback below runs on
  * whatever thread Zephyr's BT host dispatches it on, never on radio_workq —
  * and radio.h's own doc comment promises callbacks reach the application "on
@@ -79,13 +97,25 @@ static const struct bt_le_conn_param conn_param = BT_LE_CONN_PARAM_INIT(
  * literal address directly, which is what BUILD_SPEC §7.1 means by "filtered
  * on the literal address" — no scanning, and the HCI Create Connection
  * procedure this issues keeps trying that one address until it succeeds or is
- * cancelled, which is what RP §9.5 means by "the dongle never stops trying". */
+ * cancelled. Per-remote this still runs unbounded, matching RP §9.5's "the
+ * dongle never stops trying" — but only one such search may be outstanding
+ * system-wide (see the header comment), so a search is only ever cancelled
+ * to hand the shared slot to a remote that is also waiting, never to give up
+ * on it. */
 static const struct bt_conn_le_create_param create_param = BT_CONN_LE_CREATE_PARAM_INIT(
 	BT_CONN_LE_OPT_NONE, BT_GAP_SCAN_FAST_INTERVAL, BT_GAP_SCAN_FAST_INTERVAL);
 
 /* RP §9.4: reported only after 2 s with no reconnection. A remote back inside
  * the window produces no DISCONNECTED line at all (A17). */
 #define DISCONNECT_DEBOUNCE_MS 2000u
+
+/* How long a remote may hold the shared initiating slot (header comment)
+ * while the other remote is also waiting for a turn, before yielding it.
+ * Generous relative to the remote's own 100 ms undirected advertising
+ * interval — a present, correctly-advertising remote should connect well
+ * inside this window most turns — while still short enough that a genuinely
+ * absent remote's turn doesn't leave the present one waiting long. */
+#define CONNECT_YIELD_MS 4000u
 
 /* RP §9.3: "averaged over the last 8 connection events", sampled on the LINK
  * re-emission tick. The host stack exposes no per-connection-event hook, so
@@ -128,6 +158,14 @@ struct remote_state {
 
 	struct k_work_delayable disconnect_debounce;
 	bool debounce_armed;
+
+	/* Rare path only: bt_conn_le_create() itself failing synchronously
+	 * (e.g. real -ENOMEM). Deliberately separate from disconnect_debounce
+	 * above, which start_connect() used to (mis)use for this — that timer
+	 * only ever reports DISCONNECTED (disconnect_debounce_handler), it
+	 * never re-attempts the connection, so the retry it promised never
+	 * actually happened. */
+	struct k_work_delayable retry_work;
 };
 
 static struct remote_state remotes[PROTO_REMOTE_COUNT];
@@ -135,6 +173,12 @@ static const struct radio_cb *callbacks;
 static struct k_work_q *radio_workq;
 static struct bt_nrf_ltk set_ltk;
 static bool radio_ready_to_run;
+
+/* The shared initiating slot (header comment): the remote currently holding
+ * the one system-wide outstanding bt_conn_le_create(), or NULL if neither is
+ * searching right now. Only ever written on radio_workq. */
+static struct remote_state *connect_owner;
+static struct k_work_delayable connect_yield;
 
 static struct remote_state *find_by_conn(struct bt_conn *conn)
 {
@@ -144,6 +188,15 @@ static struct remote_state *find_by_conn(struct bt_conn *conn)
 		}
 	}
 	return NULL;
+}
+
+/* PROTO_REMOTE_COUNT is fixed at 2 (protocol.h) — the whole provisioning
+ * record shape (PROVISIONING_PEER_COUNT) already assumes exactly two, so a
+ * direct RED<->GREEN swap is as general as this file needs to be. */
+static struct remote_state *other_remote(const struct remote_state *rs)
+{
+	return &remotes[(rs->which == PROTO_REMOTE_RED) ? PROTO_REMOTE_GREEN
+							 : PROTO_REMOTE_RED];
 }
 
 static void diag(struct remote_state *rs, const char *text)
@@ -244,11 +297,36 @@ static void bt_evt_post(const struct bt_evt *evt)
 /* Connect / reconnect                                                       */
 /* ------------------------------------------------------------------------ */
 
+static void start_connect(struct remote_state *rs);
+
+static void retry_work_handler(struct k_work *work)
+{
+	struct remote_state *rs = CONTAINER_OF(k_work_delayable_from_work(work),
+					       struct remote_state, retry_work);
+
+	start_connect(rs);
+}
+
+/* Entry point for "this remote wants a connection" from every caller:
+ * radio_init()'s boot loop, handle_disconnected(), advance_connect(). Safe to
+ * call on a remote that already has one (no-op) or one that cannot have the
+ * shared initiating slot right now (no-op, waits for advance_connect() to
+ * hand it over — see the header comment). */
 static void start_connect(struct remote_state *rs)
 {
 	int err;
 
 	if (rs->conn != NULL) {
+		return;
+	}
+
+	if (connect_owner != NULL && connect_owner != rs) {
+		/* The other remote is currently the one system-wide initiating
+		 * attempt is allowed to belong to. Nothing to do here — its
+		 * own connected callback (success or the cancelled-by-yield
+		 * failure) or its yield timer is what calls advance_connect()
+		 * and gets back to this remote. Calling bt_conn_le_create()
+		 * here would just fail with -EALREADY. */
 		return;
 	}
 
@@ -261,18 +339,76 @@ static void start_connect(struct remote_state *rs)
 
 	err = bt_conn_le_create(&rs->peer_addr, &create_param, &conn_param, &rs->conn);
 	if (err) {
-		/* -ENOMEM (conn object pool exhausted) is the realistic failure
-		 * here; retry shortly rather than leave this remote silent. */
+		/* Real resource failure (e.g. -ENOMEM) — the contention case
+		 * above is what -EALREADY meant before this file tracked
+		 * connect_owner itself, and that case now returns early
+		 * without ever reaching bt_conn_le_create(). */
 		diag(rs, "bt_conn_le_create failed, retrying");
-		k_work_reschedule_for_queue(radio_workq, &rs->disconnect_debounce,
-					    K_MSEC(500));
+		k_work_reschedule_for_queue(radio_workq, &rs->retry_work, K_MSEC(500));
 		return;
 	}
 
+	connect_owner = rs;
 	rs->phase = PHASE_CONNECTING;
 	if (callbacks->on_link) {
 		callbacks->on_link(rs->which, PROTO_LINK_CONNECTING, 0);
 	}
+
+	/* Always arm, even when the other remote isn't currently waiting: it
+	 * might start waiting (mid-match disconnect) before this search
+	 * resolves, and connect_yield_handler() re-checks contention fresh
+	 * every time it fires rather than only at issue time, so an
+	 * uncontested search just gets re-armed and keeps running unbounded
+	 * (RP §9.5) instead of ever being cancelled. */
+	k_work_reschedule_for_queue(radio_workq, &connect_yield, K_MSEC(CONNECT_YIELD_MS));
+}
+
+/* Fires periodically while connect_owner is mid-search. If the other remote
+ * is still waiting for a turn, cancels this attempt so it gets one; if not,
+ * just re-arms and keeps checking — the search itself is untouched and keeps
+ * running unbounded, RP §9.5. */
+static void connect_yield_handler(struct k_work *work)
+{
+	struct remote_state *owner = connect_owner;
+
+	ARG_UNUSED(work);
+
+	if (owner == NULL || owner->phase != PHASE_CONNECTING) {
+		return; /* Already resolved by the time this fired. */
+	}
+
+	if (other_remote(owner)->conn != NULL) {
+		/* Uncontested for now — keep searching, keep checking. */
+		k_work_reschedule_for_queue(radio_workq, &connect_yield,
+					    K_MSEC(CONNECT_YIELD_MS));
+		return;
+	}
+
+	diag(owner, "yielding initiating slot for the other remote's turn");
+
+	/* owner->conn is still BT_CONN_INITIATING (never reached CONNECTED),
+	 * so this issues HCI LE Create Connection Cancel rather than tearing
+	 * down a live link (zephyr/subsys/bluetooth/host/conn.c,
+	 * bt_conn_disconnect()'s BT_CONN_INITIATING case) — there is nothing
+	 * live to tear down yet, and the OTHER remote's connection (if it has
+	 * one) is a completely separate bt_conn untouched by this call.
+	 * handle_connected()'s err path is what actually clears connect_owner
+	 * and calls advance_connect() once the cancel completes — not here,
+	 * to keep exactly one place responsible for tearing down rs->conn. */
+	(void)bt_conn_disconnect(owner->conn, BT_HCI_ERR_LOCALHOST_TERM_CONN);
+}
+
+/* Called on radio_workq whenever a connection attempt for just_ended has
+ * resolved — connected, failed, or was cancelled to yield — freeing (or not
+ * needing) the shared initiating slot. Hands it to the other remote first if
+ * that remote is still waiting (round-robin under contention); either way
+ * also retries just_ended itself, which start_connect()'s rs->conn/
+ * connect_owner guards make a safe no-op when it isn't the one that should
+ * go next. */
+static void advance_connect(struct remote_state *just_ended)
+{
+	start_connect(other_remote(just_ended));
+	start_connect(just_ended);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -721,10 +857,21 @@ static void handle_connected(struct remote_state *rs, uint8_t err)
 {
 	int rc;
 
+	/* Whatever this resolves to — connected or failed/cancelled — the
+	 * shared initiating slot (header comment) is free again the instant
+	 * this callback runs; the raw ACL connection either now exists or
+	 * never will for this attempt. Only encryption/discovery/subscribe
+	 * remain below, none of which touch the initiating slot. */
+	if (connect_owner == rs) {
+		connect_owner = NULL;
+		(void)k_work_cancel_delayable(&connect_yield);
+	}
+
 	if (err) {
 		bt_conn_unref(rs->conn);
 		rs->conn = NULL;
-		start_connect(rs);
+		rs->phase = PHASE_IDLE;
+		advance_connect(rs);
 		return;
 	}
 
@@ -747,6 +894,13 @@ static void handle_connected(struct remote_state *rs, uint8_t err)
 	/* Best-effort; not on the encrypted-before-GATT critical path. RP §11
 	 * requires 2M on both connections for the density argument. */
 	(void)bt_conn_le_phy_update(rs->conn, BT_CONN_LE_PHY_PARAM_2M);
+
+	/* The slot freed above is this remote's own to give up now, since
+	 * it's past needing it — let the other remote take a turn if it's
+	 * been waiting. start_connect(rs) is a no-op (rs->conn is already
+	 * set), so advance_connect() is safe to use here too rather than
+	 * duplicating its logic. */
+	advance_connect(rs);
 }
 
 static void handle_disconnected(struct remote_state *rs)
@@ -943,6 +1097,9 @@ int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
 
 	memcpy(set_ltk.val, prov->set_key, sizeof(set_ltk.val));
 
+	connect_owner = NULL;
+	k_work_init_delayable(&connect_yield, connect_yield_handler);
+
 	for (int r = 0; r < PROTO_REMOTE_COUNT; r++) {
 		struct remote_state *rs = &remotes[r];
 
@@ -956,8 +1113,15 @@ int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
 
 		k_work_init_delayable(&rs->rssi_work, rssi_work_handler);
 		k_work_init_delayable(&rs->disconnect_debounce, disconnect_debounce_handler);
+		k_work_init_delayable(&rs->retry_work, retry_work_handler);
+	}
 
-		start_connect(rs);
+	/* Both remotes are marked idle (memset above) before either calls
+	 * start_connect() — RED's own call must see GREEN's real want-a-turn
+	 * state, not a half-initialized one, for the very first contention
+	 * check to be correct. */
+	for (int r = 0; r < PROTO_REMOTE_COUNT; r++) {
+		start_connect(&remotes[r]);
 	}
 
 	radio_ready_to_run = true;

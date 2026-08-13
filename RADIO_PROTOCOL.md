@@ -533,6 +533,8 @@ The asymmetry is deliberate. Connection is reported late because a connection th
 
 No state is resumed on reconnect. The remote sends `UP_READY`, the chain of §7.2 runs, and indicator state is asserted afresh from the only node that holds it.
 
+**"Never stops trying" is per remote, not literally two searches at once.** The Bluetooth host on the dongle allows exactly one outstanding connection-creation attempt system-wide, so when both remotes want one simultaneously — at boot, or a simultaneous dual-loss — the dongle time-shares the single attempt between them in bounded turns rather than letting either search run unbounded and starve the other. Once only one remote is trying (the normal mid-match case: the other is already connected), that one holds the attempt uncontested and it runs unbounded exactly as the table above describes — the sharing only ever activates under actual contention, and never affects a remote that is already connected. `dongle/src/radio_ble.c`'s header comment has the mechanism.
+
 ---
 
 ## 10. Set binding and security

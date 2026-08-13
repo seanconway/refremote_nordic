@@ -23,8 +23,8 @@ Read `SCOPE.md` §7 before proposing a design change. Those five principles — 
 |---|---|---|
 | **Scoreboard** | [`wrsl-app`](https://github.com/seanconway/wrsl-app) | Browser application, served once and run offline. Owns all ruleset logic, all match state, the clocks of record, and the match event log. |
 | **Dongle** | this repo, `dongle/` | USB-C bridge between the remote pair and the host. Isolates wireless performance from host hardware variability. |
-| **Remote (Red)** | this repo, *not started* | Worn on the referee's red (left) wristband. |
-| **Remote (Green)** | this repo, *not started* | Worn on the referee's green (right) wristband. |
+| **Remote (Red)** | this repo, `remote/` | Worn on the referee's red (left) wristband. Firmware code-complete, confirmed connecting on a DK. |
+| **Remote (Green)** | this repo, `remote/` | Worn on the referee's green (right) wristband. Same firmware as Red; not yet built/flashed as a separate unit. |
 
 A dongle plus its two remotes constitute an **officiating set** — the unit of pairing, labelling, deployment and field replacement. Sets are paired in firmware and labelled by serial number; there is no field pairing procedure, and the supported remedy for a hardware failure mid-match is substituting a complete spare set.
 
@@ -75,14 +75,14 @@ dongle/                  USB bridge firmware
   tools/
     ncsenv.sh            reconstructs the NCS environment for CLI builds (bash)
     provision.py         bench tool: generates a set's provisioning_data.h headers
-remote/                  wrist remote firmware — code-complete, unconfirmed on hardware
+remote/                  wrist remote firmware — code-complete, confirmed connecting on a DK (RED)
 ```
 
 `PROTOCOL.md` is kept **byte-identical in this repo and in `wrsl-app`**. Edit it here and copy; they were previously kept in step by a filesystem hard link, which does not survive an editor writing a new file, so verify the hashes match after any change.
 
 ## Status
 
-The USB half of the dongle is built and working on real hardware against protocol **v2.0**. Protocol **v3.0** is a breaking revision written against the functional specification, and the firmware has not yet been brought up to it. The radio layer is **specified but not implemented** — [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0 — and the remotes do not exist.
+The dongle firmware is at protocol **v3.0**, flashed and answering on hardware. The radio layer — [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0 — is implemented and, as of 2026-08-13, **confirmed on hardware for the first time**: a DK remote (RED) connects to the dongle over BLE, encrypted, and the scoreboard app shows it connected with live telemetry. GREEN and the negative-case conformance tests (A12–A14, A19) are still open, and one of them (A13) needs a small firmware fix before it can even be run. Custom remote hardware (the table above) is not yet designed — the DK is the prototyping platform in use until M6.
 
 [`PLAN.md`](PLAN.md) carries the current state in detail, the record of completed work, the planned work in order, the decisions that still bind, and the validation ladder with its results log. **Read it before writing code**, particularly §3.4, which lists the ways the radio layer can regress the USB link without touching any USB code.
 
