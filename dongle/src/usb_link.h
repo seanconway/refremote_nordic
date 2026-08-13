@@ -43,7 +43,7 @@ int usb_link_send(const char *line);
  *
  * This counter is not optional. Both drop paths were silent before, and the
  * function returned void, so a dropped line was indistinguishable from a line
- * that was never sent. PLAN.md §3.10 B2 makes ring saturation a two-remote
+ * that was never sent. PLAN.md §5.4 B2 makes ring saturation a two-remote
  * condition, which means it will first appear exactly when it is hardest to
  * diagnose — so the drop path is instrumented before the traffic that
  * saturates it exists.

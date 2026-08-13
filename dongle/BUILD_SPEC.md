@@ -24,7 +24,7 @@ The firmware is currently at WP v2.0. That revision is a breaking change and the
 
 The radio sits behind **one interface, `radio.h`, with two implementations selected at build time.** `radio_null` is not scaffolding to be deleted — it is a permanent build configuration in which the entire wire layer runs, exercised by the `TEST` modes, with no radio anywhere in the system.
 
-That configuration is what makes a radio regression attributable. `PLAN.md` §3.10 lists eight ways adding a radio degrades a working USB link without touching any USB code, and every one of them is diagnosed by asking *does it still happen with `CONFIG_DONGLE_RADIO=n`?* A baseline you can re-run in thirty seconds answers that; a baseline that was a milestone six weeks ago does not.
+That configuration is what makes a radio regression attributable. `PLAN.md` §5.4 lists eight ways adding a radio degrades a working USB link without touching any USB code, and every one of them is diagnosed by asking *does it still happen with `CONFIG_DONGLE_RADIO=n`?* A baseline you can re-run in thirty seconds answers that; a baseline that was a milestone six weeks ago does not.
 
 ---
 
@@ -297,7 +297,7 @@ Entries expire at `born + ACK_WINDOW_MS`. v2.0 expired them lazily, purging as `
 2. `SILENT` → clear the entry, record the latency, and **send nothing at all** (§6.4).
 3. Otherwise compute the remaining budget and send a `TAP` to `entry.src` (§6.3).
 
-**Routed by `src`, never broadcast.** A broadcast tap is indistinguishable from a correctly routed one whenever only one remote is being watched, which is every bench test until a second remote exists. It is wrong in every real match. This is `PLAN.md` §2.5 item 4 and rung B6.
+**Routed by `src`, never broadcast.** A broadcast tap is indistinguishable from a correctly routed one whenever only one remote is being watched, which is every bench test until a second remote exists. It is wrong in every real match. This is `HISTORY.md` §2.5 item 4 and rung B6.
 
 Expect the app to `ACK` a duplicate `EVT` it dropped — it does so deliberately, because withholding the tap would make the referee press a third time. The dongle already retired that entry on the first `ACK`, so it lands on the do-nothing path and exactly one tap reaches the wrist.
 
@@ -430,7 +430,7 @@ The console is disabled and a second CDC-ACM instance is forbidden (§10), so `L
 
 Emitted as a `LOG` line on handshake, together with the connection interval in use so that any later latency figure is attributable to a known rung.
 
-**The transmit drop counter is new and it is not optional.** `usb_link_send()` has two silent drop paths today — an over-length line and a full ring — and returns `void`, so a dropped line is indistinguishable from a line that was never sent. `PLAN.md` §3.10 B2 makes ring saturation a two-remote condition, which means it will first appear exactly when it is hardest to diagnose. Instrument the drop path before the traffic that saturates it exists.
+**The transmit drop counter is new and it is not optional.** `usb_link_send()` has two silent drop paths today — an over-length line and a full ring — and returns `void`, so a dropped line is indistinguishable from a line that was never sent. `PLAN.md` §5.4 B2 makes ring saturation a two-remote condition, which means it will first appear exactly when it is hardest to diagnose. Instrument the drop path before the traffic that saturates it exists.
 
 `BEAT` is the only frame on either link that may be dropped, and it is dropped first under pressure. Its drops are counted separately because a `BEAT` drop is expected under load and a `TAP` drop is a defect, and one counter cannot say both.
 
@@ -488,7 +488,7 @@ Rung names are `PLAN.md`'s, kept so the results log stays continuous.
 | **0** | Host suites rewritten to v3.0 before the parser is touched | ◐ 2026-08-11 — toolchain in, protocol suite green at 131 checks. The `rframe` suite moves to stage 3, still written before its codec |
 | **1** | Wire v3.0, the seam, `radio_null` | ◐ 2026-08-11 — code-complete, **V0** green (T1–T16, both fail-closed cases), both build configurations clean. Outstanding: wire-log diff against the emulator (modulo §5.7), and **V1–V6** on hardware with `TEST 0` sent first |
 | **2** | Provisioning record, reader, refusal path, bench tool | **A19** on both boards. One set provisioned |
-| **3** | `rframe` codec, then BLE at 7.5 ms | ◐ **W0 closed 2026-08-12; W1's positive case confirmed on hardware 2026-08-13.** `common/rframe.c/.h` and `src/radio_ble.c` written and building clean under `-DCONFIG_DONGLE_RADIO=y`; `dongle/tests/rframe` green, 0 failures. A DK (RED) connects, encrypts, discovers, subscribes and reports `CONNECTED` with real RSSI. Getting there required rewriting the boot-time connection scheduler — Zephyr allows only one outstanding `bt_conn_le_create()` system-wide, and the original "fire both remotes' create calls at boot" logic could let one remote's unbounded search starve the other permanently (PLAN.md §9.2/§9.3). **A12, A13, A14, A19 on the connection remain to be run — a pass on the positive case alone is not a pass — and A13 specifically cannot pass as written**: `handle_identity_read()`'s `set_serial` comparison is a known, unimplemented deferral, not yet fixed |
+| **3** | `rframe` codec, then BLE at 7.5 ms | ◐ **W0 closed 2026-08-12; W1's positive case confirmed on hardware 2026-08-13.** `common/rframe.c/.h` and `src/radio_ble.c` written and building clean under `-DCONFIG_DONGLE_RADIO=y`; `dongle/tests/rframe` green, 0 failures. A DK (RED) connects, encrypts, discovers, subscribes and reports `CONNECTED` with real RSSI. Getting there required rewriting the boot-time connection scheduler — Zephyr allows only one outstanding `bt_conn_le_create()` system-wide, and the original "fire both remotes' create calls at boot" logic could let one remote's unbounded search starve the other permanently (`HISTORY.md` §9.2/§9.3). **A12, A13, A14, A19 on the connection remain to be run — a pass on the positive case alone is not a pass — and A13 specifically cannot pass as written**: `handle_identity_read()`'s `set_serial` comparison is a known, unimplemented deferral, tracked as `PLAN.md` queue step S1 |
 | **4** | End to end | ◐ **Code-complete 2026-08-12.** The whole DK remote firmware written (`../remote/src/`), building clean against `nrf52840dk/nrf52840`. Press on the DK → score on the scoreboard → tap rendered on that DK, **W2–W5**, **A15**, and **A20** verified by frame count — all still to be run on hardware |
 | **5** | Measurement | **W6–W8**, **V8**, **R2**. Latency at range for the record, not as a gate |
 

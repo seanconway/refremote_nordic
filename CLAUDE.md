@@ -14,7 +14,8 @@ Each document has one job. Read in this order; later documents answer to earlier
 | `SYSTEM_FUNC_SPEC.md` | How the system behaves | **Authoritative on behaviour.** Cited as "FS §n" |
 | `PROTOCOL.md` | The dongle ↔ scoreboard wire contract | Answers to both of the above. Byte-identical in both repos |
 | `RADIO_PROTOCOL.md` | The dongle ↔ remote radio contract. The counterpart to `PROTOCOL.md`, and `PROTOCOL.md` §12 is its acceptance criteria | Answers to both of the above. **This repo only** — the app never sees the radio |
-| `PLAN.md` | **The living status document**: current state (§1), completed work (§2), planned work and the embedded roadmap (§3, with §3.3 mapping the milestones onto the development phases), binding decisions (§4), the two validation ladders — USB V0–V8 and radio W0–W8 (§5–§6), risks and gaps (§7–§8), results log and version history (§9) | Answers to all of the above |
+| `PLAN.md` | **The living forward-looking document**: current state (§1), the work queue of alternating agent/bench steps (§2), parked items with their unlock conditions (§3), binding decisions (§4), the validation reference — both ladders, the regression list, the emulator, the DK's reduced surface (§5), deployment validation (§6), unmeasured risks (§7), known gaps (§8), definition of done (§9) | Answers to all of the above |
+| `HISTORY.md` | **Append-only record**: completed-work narratives, the results log, project history. Section numbers preserve their original `PLAN.md` numbering | Answers to `PLAN.md` |
 | `dongle/BUILD_SPEC.md`, `remote/BUILD_SPEC.md` | **What to build.** Module boundaries, interfaces, state, algorithms, per-stage acceptance. `PLAN.md` says what state the project is in and why the work is ordered as it is; these say what to build | Answer to the protocols. **More specific on mechanism; `PLAN.md` wins on sequence and status** |
 | `README.md` (this repo) | Overview of the **embedded domain**: system composition, hardware, the stateless-remote architecture, layout | Orientation |
 | `dongle/README.md` | The **dongle firmware** specifically: layout, build, flash, manual test, configuration | Orientation and procedure |
@@ -24,7 +25,7 @@ Each document has one job. Read in this order; later documents answer to earlier
 
 If a change would contradict `SCOPE.md` or `SYSTEM_FUNC_SPEC.md`, **that is a conversation, not an implementation detail.** Those two documents were composed deliberately; treat a conflict as a signal that the implementation is wrong, and raise it.
 
-`PLAN.md` is a **living document** — when work completes or direction changes, it moves from §3 (planned) to §2 (completed) and the status tables and results log are updated in the same change. A PLAN.md that lags the code is worse than no PLAN.md.
+`PLAN.md` and `HISTORY.md` are **living documents** — when a work-queue step completes or direction changes, its checkbox is ticked in `PLAN.md` §2 and the results are appended to `HISTORY.md` §9.2 (and §9.3 for the narrative) in the same change. A plan that lags the code is worse than no plan.
 
 ## 2. Two repos, one product
 
@@ -167,20 +168,20 @@ Each of these cost real time. None of them produces a useful error message.
 
 ## 7. Verify in a browser, not just in the suite
 
-Two M1 defects passed the tests, the linter and the production build, and were found only by driving the application in Chrome: a running-clock readout frozen at `00:00`, and the browser repainting the entire palette. Both are written up in `PLAN.md` §2.4.
+Two M1 defects passed the tests, the linter and the production build, and were found only by driving the application in Chrome: a running-clock readout frozen at `00:00`, and the browser repainting the entire palette. Both are written up in `HISTORY.md` §2.4.
 
 The generalisation: **anything derived from a running clock must be watched for several seconds**, and **the developer's browser is not a representative browser.** Use the `claude-in-chrome` tools for this; the dev server is at `http://localhost:5173/`.
 
 ## 8. Current state, in one line
 
-The application and the dongle firmware are both at protocol v3.0, the dongle is **flashed to 0.2.0 and answering on hardware**, and **the two ends have still never been connected** — because no browser has yet held the port, not because anything refuses. **The next action is V2, the app handshake.** This is **M2** (`PLAN.md` §3.1), one firmware programme in six stages; stages 0 and 1 are code-complete (§2.6), V0 is green, V1 and V3 are green on their wire half, and the emulator wire-log diff is clean (§2.7). Stages 2–5 add provisioning, the radio, and a DK remote, ending in a press on the DK scoring on the scoreboard and acknowledged back to it. Full status is `PLAN.md` §1.
+The application and the dongle firmware are both at protocol v3.0, the dongle is **flashed to 0.2.0 and answering on hardware**, and **the two ends have still never been connected** — because no browser has yet held the port, not because anything refuses. **The next action is V2, the app handshake.** This is **M2** (`PLAN.md` §2.1, the work queue), one firmware programme; the early wire-layer work is code-complete (`HISTORY.md` §2.6), V0 is green, V1 and V3 are green on their wire half, and the emulator wire-log diff is clean (`HISTORY.md` §2.7). The remaining queue steps add provisioning negatives, the radio ladder, and the demonstration: a press on the DK scoring on the scoreboard and acknowledged back to it. Full status is `PLAN.md` §1.
 
 **Three caveats on that green, all of which look like pedantry and are not.** The **`STATE` render is still unobserved** — accepted is byte-identical on the wire to a dead indicator; the haptic half closed on 2026-08-11 and `STATE` is two commands away, addressed to `GREEN`. **The dongle has one blue lamp and it is on P0.06, the `GREEN` channel** — `RED`/P0.08 is unfitted, so `HAP RED`, `STATE RED` and every `ERR` (which borrows `RED`) are invisible: *"no blink" never means "no error"*. That silence is also what proves routing, since a firmware ignoring the target would light the same lamp for both. `dongle/BOARD.md` is the reference; the devicetree aliases are not, and gave two different wrong answers before a measurement settled it. And **the COM port is exclusive**: a terminal and the app cannot both hold it, so terminal rungs and browser rungs have to be sequenced, not interleaved.
 
-After M2: M4 (the 2:1 link) → M5 (full-feature remote on the DK) → M6 (custom PCB) → M7 (port and validate) → M8 (custom dongle, optional), mapped onto the development phases in `PLAN.md` §3.3. **M3's number is retired, not reused** — it was the separate radio milestone, now absorbed into M2 — because the last renumbering left stale references and a gap costs less than that.
+After M2: M4 (the 2:1 link) → M5 (full-feature remote on the DK) → M6 (custom PCB) → M7 (port and validate) → M8 (custom dongle, optional), mapped onto the development phases in `PLAN.md` §2's phase table. **M3's number is retired, not reused** — it was the separate radio milestone, now absorbed into M2 — because the last renumbering left stale references and a gap costs less than that.
 
 **Three things about the ordering are load-bearing and look like pedantry until they bite:**
 
-- **The no-radio baseline is a build configuration, not a milestone.** `CONFIG_DONGLE_RADIO=n` runs the whole wire layer with the radio compiled out, and it is kept for the life of the project — that is what makes §3.10's regression list attributable, and it beats a milestone that was green once.
+- **The no-radio baseline is a build configuration, not a milestone.** `CONFIG_DONGLE_RADIO=n` runs the whole wire layer with the radio compiled out, and it is kept for the life of the project — that is what makes `PLAN.md` §5.4's regression list attributable, and it beats a milestone that was green once.
 - **M6 cannot open until R3, R4 and R6 have measurements.** Each has a hardware contingency behind it, and a board designed against a prediction is a board that gets respun.
 - **The radio is plain BLE at 7.5 ms, and SCI is deferred** (`PLAN.md` §4.8). The interval buys retransmission headroom rather than latency, and whether the headroom suffices depends on an unmeasured number — so the baseline is the rung needing no exotic controller feature. It also means battery sizing should carry headroom, because a later move to 2.5 ms triples connection events.

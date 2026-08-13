@@ -35,14 +35,14 @@ config DONGLE_RADIO
 	  wire layer runs unchanged, driven by the TEST modes.
 
 	  THE n CONFIGURATION IS RETAINED PERMANENTLY. It is not scaffolding
-	  and it is not a milestone that was green once. PLAN.md §3.10 lists
+	  and it is not a milestone that was green once. PLAN.md §5.4 lists
 	  eight ways adding a radio degrades a working USB link without
 	  touching any USB code, and every one of them is diagnosed by asking
 	  whether it still happens with the radio compiled out. A baseline
 	  you can re-run in thirty seconds answers that.
 
 	  This defaults to n only because radio_ble.c does not exist yet; it
-	  flips to y at Stage 3 (PLAN.md §3.1) when it does.
+	  flips to y at Stage 3 (PLAN.md §2.1, the work queue) when it does.
 
 	  It REPLACES the deleted DONGLE_FAKE_LINK, which reported both
 	  remotes CONNECTED with a fixed RSSI and battery. That symbol was

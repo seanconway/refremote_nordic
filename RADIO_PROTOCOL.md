@@ -608,7 +608,7 @@ The threat model is a crowded hall, not an adversary. It is worth being explicit
 | Event length | Sized for one packet pair | One 27-byte pair per event is all this protocol needs (§12) |
 | TX power | **+4 dBm default**, +8 dBm as a documented escalation | See below |
 
-**On transmit power.** The nRF52840 will do +8 dBm and the temptation is to start there. Thirty systems all transmitting at +8 dBm raise each other's noise floor, so the setting that improves one set's link budget degrades the aggregate — and the aggregate is the requirement. The escalation order for a link budget that does not close is the one `PLAN.md` §3.4 already gives: **a USB extension cable to raise and separate the dongle, then a dongle placement constraint in the deployment documentation, then transmit power.** Raising power first will appear to work on a bench with one set and is the hardest of the three to walk back once shipped.
+**On transmit power.** The nRF52840 will do +8 dBm and the temptation is to start there. Thirty systems all transmitting at +8 dBm raise each other's noise floor, so the setting that improves one set's link budget degrades the aggregate — and the aggregate is the requirement. The escalation order for a link budget that does not close is the one `PLAN.md` §5.3 already gives: **a USB extension cable to raise and separate the dongle, then a dongle placement constraint in the deployment documentation, then transmit power.** Raising power first will appear to work on a bench with one set and is the hardest of the three to walk back once shipped.
 
 **The dongle's location is part of the link budget.** It sits in a USB port on a laptop at the scoreboard table — close to the host's own 2.4 GHz radios, often below table height, frequently with bodies between it and the mat. Every measurement in §12 must be taken at the dongle **as deployed**, not on a bench with line of sight.
 
@@ -667,7 +667,7 @@ Descend to rung 4 only on a **measured** scheduling failure — dropped connecti
 
 **These are estimates from documentation and arithmetic, and they have never been measured on this hardware.** They are here so that the measurement has a prediction to falsify, which is the only way a measurement of this kind means anything. That they are unmeasured is precisely why the baseline is the rung that needs no special controller feature to reach.
 
-**One consequence to hold, because it runs backwards into hardware.** The interval is an input to the radio power budget and through it to battery sizing (`PLAN.md` §3.3, R6). A board sized against rung 3 and later moved to rung 1 sees roughly three times the connection events per second, so a battery sized exactly to rung 3 would need a respin. Size with headroom, and keep the interval a single named constant in one place, so the option survives without any SCI code existing.
+**One consequence to hold, because it runs backwards into hardware.** The interval is an input to the radio power budget and through it to battery sizing (`PLAN.md` §4.8, R6). A board sized against rung 3 and later moved to rung 1 sees roughly three times the connection events per second, so a battery sized exactly to rung 3 would need a respin. Size with headroom, and keep the interval a single named constant in one place, so the option survives without any SCI code existing.
 
 ### 12.3 SCI configuration — for the deferred contingency only
 

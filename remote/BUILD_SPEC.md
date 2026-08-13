@@ -31,7 +31,7 @@ The product remote has **seven buttons, four RGB indicators, an ERM with a drive
 | `LED_PWR` and state of charge | The DK is bus-powered. `UP_TELEMETRY.battery_pct` is **synthetic** — see §8.3 | Real battery and PMIC |
 | Tactile discrimination between buttons | Four identical DK buttons; the product's are shaped and sized differently, and `TOGGLE_CLOCK` is an oversized tactile datum | Enclosure design |
 
-**The three missing buttons are deliberately not simulated.** `REMOVE_POINT`, `BACKWARD` and `F2` wait for real GPIO. A shift or bank modifier to reach seven from four is **rejected**: it is a second input path, which is the same objection §2.3 of `PLAN.md` makes to an operator shortcut in the scoreboard, one layer down. It would be firmware the product does not have, exercising timing the product does not have, and it is the only thing under test that would ship nowhere.
+**The three missing buttons are deliberately not simulated.** `REMOVE_POINT`, `BACKWARD` and `F2` wait for real GPIO. A shift or bank modifier to reach seven from four is **rejected**: it is a second input path, which is the same objection §2.3 of `HISTORY.md` makes to an operator shortcut in the scoreboard, one layer down. It would be firmware the product does not have, exercising timing the product does not have, and it is the only thing under test that would ship nowhere.
 
 ---
 
@@ -57,7 +57,7 @@ All four are `GPIO_PULL_UP | GPIO_ACTIVE_LOW` in the stock devicetree.
 
 All four LEDs are active-low.
 
-**This differs from `PLAN.md` §3.4, which put the haptic proxy on LED 4, and the reason is worth recording.** The stock DK devicetree puts only `led0` (P0.13) on a PWM channel — `pwm0_default` assigns `PWM_OUT0` to P0.13 and nothing else. Driving any other LED with PWM means extending the `pwm0` pinctrl in a board overlay. Since physical LED position carries no meaning on a development kit, the mapping is arbitrary and the one that needs no overlay is better: **one fewer thing that can be wrong, and one fewer file that diverges from upstream.** `PLAN.md` §3.4's table is corrected to match.
+**This differs from the plan's original DK indicator table (recorded historically at `HISTORY.md` §2.9, then `PLAN.md` §3.4), which put the haptic proxy on LED 4, and the reason is worth recording.** The stock DK devicetree puts only `led0` (P0.13) on a PWM channel — `pwm0_default` assigns `PWM_OUT0` to P0.13 and nothing else. Driving any other LED with PWM means extending the `pwm0` pinctrl in a board overlay. Since physical LED position carries no meaning on a development kit, the mapping is arbitrary and the one that needs no overlay is better: **one fewer thing that can be wrong, and one fewer file that diverges from upstream.** `PLAN.md` §5.6's table reflects the correction.
 
 Consequence: `led0`'s `gpio-leds` node is **not used**. The haptic proxy drives `pwm_led0`, and driving the same pin from both the GPIO and PWM drivers is a conflict that does not announce itself.
 
@@ -317,7 +317,7 @@ Rung names are `PLAN.md`'s.
 
 | Stage | Green when |
 |---|---|
-| **3** | ◐ **W0 green 2026-08-12; W1's positive case confirmed on hardware 2026-08-13** — `common/rframe.c/.h` shared with the dongle build, host suite green (`dongle/tests/rframe`, 20 checks, 67 assertions, 0 failures — `PLAN.md` §9.2/§9.3). **W0** — codec cases A1–A7, A11, A20 green on the host, with no board involved. **W1** — a DK (RED) connects, encrypted from the provisioned key, `RR_IDENTITY` read and validated, CCCD subscribed, `LED_LINK` (DK LED 4) solid, confirming the same from the remote's own side. **The negatives A12, A13, A14, A19 are still to be run — a pass on the positive case alone is not a pass — and A13 cannot pass yet as written**: the dongle's `set_serial` comparison in `handle_identity_read()` is a known, unimplemented deferral |
+| **3** | ◐ **W0 green 2026-08-12; W1's positive case confirmed on hardware 2026-08-13** — `common/rframe.c/.h` shared with the dongle build, host suite green (`dongle/tests/rframe`, 20 checks, 67 assertions, 0 failures — `HISTORY.md` §9.2/§9.3). **W0** — codec cases A1–A7, A11, A20 green on the host, with no board involved. **W1** — a DK (RED) connects, encrypted from the provisioned key, `RR_IDENTITY` read and validated, CCCD subscribed, `LED_LINK` (DK LED 4) solid, confirming the same from the remote's own side. **The negatives A12, A13, A14, A19 are still to be run — a pass on the positive case alone is not a pass — and A13 cannot pass yet as written**: the dongle's `set_serial` comparison in `handle_identity_read()` is a known, unimplemented deferral |
 | **4** | ◐ **Code-complete 2026-08-12** — `src/link.c`, `buttons.c`, `haptic.c`, `indicators.c`, `main.c` all written, building clean against `nrf52840dk/nrf52840` with a generated `provisioning_data.h` (§9, PLAN.md §4.13). **W2** uplink — all three gestures, with 600 ms and 150 ms **measured, not assumed**; A4, A5, A6. **W3** downlink — idempotent indicators (A11), and **A20 verified by counting frames**, not by watching an LED that was never going to light. **W4** round trip — A8, A9, A10, and `taps_dropped_late` non-zero when provoked and zero when not. **W5** link state — **A15**, A16, A17, A18, A7 — all still to be run on hardware |
 | **5** | Second peripheral, range, density, soak |
 

@@ -1,6 +1,6 @@
 /*
  * Drives dongleModel.js with the same script the firmware gets, so the two
- * traces can be diffed line for line. PLAN.md §3.2 makes the emulator the
+ * traces can be diffed line for line. PLAN.md §5.5 makes the emulator the
  * executable reference the firmware has to match; this is what turns that
  * claim into a check rather than an assertion.
  *

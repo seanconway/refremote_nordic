@@ -9,7 +9,7 @@
  * radio_null is not scaffolding to be deleted. It is a permanent build
  * configuration in which the whole wire layer runs — exercised by the TEST
  * modes — with no radio anywhere in the system, and it is what makes a radio
- * regression attributable: PLAN.md §3.10 lists eight ways adding a radio
+ * regression attributable: PLAN.md §5.4 lists eight ways adding a radio
  * degrades a working USB link without touching any USB code, and every one of
  * them is diagnosed by asking "does it still happen with the radio compiled
  * out?" A baseline you can re-run in thirty seconds answers that. A baseline

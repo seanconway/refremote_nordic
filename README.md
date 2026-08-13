@@ -58,8 +58,9 @@ SCOPE.md                 project scope — authoritative
 SYSTEM_FUNC_SPEC.md      functional specification — authoritative
 PROTOCOL.md              dongle ↔ scoreboard wire protocol v3.0
 RADIO_PROTOCOL.md        dongle ↔ remote radio protocol v1.0 — this repo only
-PLAN.md                  living status document — completed work, planned work,
-                         binding decisions, the validation ladder, version history
+PLAN.md                  living forward-looking document — current state, the work
+                         queue, parked items, binding decisions, the validation reference
+HISTORY.md                append-only record — completed work, results log, project history
 tools/
   ncsenv.ps1             PowerShell translation of dongle/tools/ncsenv.sh
   build_set.ps1          one-shot per-unit step: generate provisioning, build
@@ -84,7 +85,7 @@ remote/                  wrist remote firmware — code-complete, confirmed conn
 
 The dongle firmware is at protocol **v3.0**, flashed and answering on hardware. The radio layer — [`RADIO_PROTOCOL.md`](RADIO_PROTOCOL.md) v1.0 — is implemented and, as of 2026-08-13, **confirmed on hardware for the first time**: a DK remote (RED) connects to the dongle over BLE, encrypted, and the scoreboard app shows it connected with live telemetry. GREEN and the negative-case conformance tests (A12–A14, A19) are still open, and one of them (A13) needs a small firmware fix before it can even be run. Custom remote hardware (the table above) is not yet designed — the DK is the prototyping platform in use until M6.
 
-[`PLAN.md`](PLAN.md) carries the current state in detail, the record of completed work, the planned work in order, the decisions that still bind, and the validation ladder with its results log. **Read it before writing code**, particularly §3.4, which lists the ways the radio layer can regress the USB link without touching any USB code.
+[`PLAN.md`](PLAN.md) carries the current state in detail, the work queue in order, the decisions that still bind, and the validation reference; [`HISTORY.md`](HISTORY.md) carries the record of completed work and the results log. **Read `PLAN.md` before writing code**, particularly §5.4, which lists the ways the radio layer can regress the USB link without touching any USB code.
 
 ## Build and flash
 

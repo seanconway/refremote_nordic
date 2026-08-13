@@ -1,8 +1,8 @@
 # Wire-log diff — firmware against the emulator
 
-`PLAN.md` §3.2 calls `wrsl-app/src/emulator/dongleModel.js` the executable reference the firmware has to match. This turns that claim into a check. It is a **stage 1 exit criterion** (§5) and it is wanted again every time the firmware changes underneath the wire layer — §3.10 lists eight ways the radio can regress this link without touching any USB code, and a clean diff against the pre-radio trace is how each becomes attributable.
+`PLAN.md` §5.5 calls `wrsl-app/src/emulator/dongleModel.js` the executable reference the firmware has to match. This turns that claim into a check. It closed the no-radio baseline and it is wanted again every time the firmware changes underneath the wire layer — §5.4 lists eight ways the radio can regress this link without touching any USB code, and a clean diff against the pre-radio trace is how each becomes attributable.
 
-First run: 2026-08-11, firmware 0.2.0. **All 39 `EVT` lines identical.** The seven remaining differences are enumerated in `PLAN.md` §2.7.
+First run: 2026-08-11, firmware 0.2.0. **All 39 `EVT` lines identical.** The seven remaining differences are enumerated in `HISTORY.md` §2.7.
 
 ## Running it
 
