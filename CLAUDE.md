@@ -163,6 +163,7 @@ Each of these cost real time. None of them produces a useful error message.
 | **Fault indication is invisible on the dongle** | `indicator_error()` borrows the `RED` channel, which is the unfitted P0.08, so **no `ERR` blinks anything** — `APP_TIMEOUT` included. Left that way on purpose (`BOARD.md` §2.2): moving it to the fitted lamp would collide with every `GREEN` haptic and destroy the asymmetry that proves routing | Read the wire, not the lamp. **"No blink" never means "no error."** Errors always leave as `ERR` lines |
 | **A second CDC-ACM instance** | Log output interleaves into the protocol stream; lines corrupt intermittently and silently | Console, shell and logging are off in `prj.conf`, and a `BUILD_ASSERT` in `usb_link.c` fails the build. This is the trap the upstream `cdc_acm` sample falls into |
 | **Gating transmission on DTR** | The dongle enumerates but never answers `INFO` | Never gate on it. The app never calls `setSignals()` |
+| **`NRFUTIL_HOME` pointed at the NCS toolchain's own nrfutil** | `nrfutil nrf5sdk-tools dfu usb-serial` fails with `pc_nrfutil_legacy_v6.1.7.exe not found in any of the search paths` — reads like a DFU/hardware fault, not an environment one | The `nrf5sdk-tools` plugin (and its legacy DFU helper binary) is installed under the *personal* `~/.nrfutil`, not the toolchain-scoped nrfutil home a "mirror every toolchain env var" script naturally reaches for. Leave `NRFUTIL_HOME` unset — `tools/ncsenv.ps1` and `dongle/tools/ncsenv.sh` both have the full account |
 
 ## 7. Verify in a browser, not just in the suite
 

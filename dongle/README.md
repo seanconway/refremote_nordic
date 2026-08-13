@@ -78,6 +78,8 @@ west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build \
 
 Output: `dongle/build/dongle/zephyr/zephyr.hex`
 
+**On PowerShell**, `../tools/ncsenv.ps1` (repo root, not here — it serves `remote/` too) is the equivalent of `ncsenv.sh` above: `. tools\ncsenv.ps1` from the repo root. For programming a whole set at once — provisioning, all three firmwares, the dongle's DFU zip — `../tools/build_set.ps1 RR-0001` does the entire sequence in one command; see its own header comment for what it does and deliberately does not do (it stops short of the actual flash, which needs a physical bootloader-entry press per device).
+
 **The no-radio baseline is the current default**, and it is kept for the life of the project. Build it explicitly into its own directory when you want both configurations side by side:
 
 ```bash

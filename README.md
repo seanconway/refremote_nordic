@@ -60,6 +60,10 @@ PROTOCOL.md              dongle ↔ scoreboard wire protocol v3.0
 RADIO_PROTOCOL.md        dongle ↔ remote radio protocol v1.0 — this repo only
 PLAN.md                  living status document — completed work, planned work,
                          binding decisions, the validation ladder, version history
+tools/
+  ncsenv.ps1             PowerShell translation of dongle/tools/ncsenv.sh
+  build_set.ps1          one-shot per-unit step: generate provisioning, build
+                         dongle + both remotes, package the dongle DFU zip
 dongle/                  USB bridge firmware
   README.md              build, flash, manual test
   src/
@@ -68,8 +72,10 @@ dongle/                  USB bridge firmware
     engine.c/.h          supervision, ACK routing, indicator relay, TEST modes
     indicator.c/.h       LED stand-in for the remote haptics
   tests/protocol/        host unit tests for PROTOCOL.md §14
-  tools/ncsenv.sh        reconstructs the NCS environment for CLI builds
-remote/                  wrist remote firmware — not started
+  tools/
+    ncsenv.sh            reconstructs the NCS environment for CLI builds (bash)
+    provision.py         bench tool: generates a set's provisioning_data.h headers
+remote/                  wrist remote firmware — code-complete, unconfirmed on hardware
 ```
 
 `PROTOCOL.md` is kept **byte-identical in this repo and in `wrsl-app`**. Edit it here and copy; they were previously kept in step by a filesystem hard link, which does not survive an editor writing a new file, so verify the hashes match after any change.

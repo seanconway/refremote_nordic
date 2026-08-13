@@ -16,7 +16,7 @@ one, so there is no such thing as a build with no real identity.
 Then, for each role, the build command this tool prints, e.g.:
 
     west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build-radio \\
-        -- -DCONFIG_DONGLE_RADIO=y -DCONFIG_PROVISIONING_HEADER_DIR=<abs path>/out/RR-0001_dongle
+        -- -DCONFIG_DONGLE_RADIO=y '-DCONFIG_PROVISIONING_HEADER_DIR="<abs path>/out/RR-0001_dongle"'
 
 Deliberately dependency-free beyond the Python standard library.
 
@@ -146,15 +146,25 @@ def write_manifest(path, set_serial, own_addrs, set_key, header_dirs):
 
 
 def build_command(role, header_dir):
-    header_dir = header_dir.resolve()
+    # CONFIG_PROVISIONING_HEADER_DIR is a Kconfig string, so its value must
+    # carry literal double quotes to survive into the generated config
+    # fragment (dongle/BUILD_SPEC.md §9) — and forward slashes, not backslashes,
+    # sidestep a Windows command-line quirk where a backslash immediately
+    # before a closing double quote can be read as an escape. Wrapping the
+    # whole -D token in single quotes is what makes the printed line paste
+    # straight into PowerShell *and* bash unmodified: both shells pass a
+    # single-quoted argument through literally, quotes and all.
+    header_str = str(header_dir.resolve()).replace("\\", "/")
+    prov_arg = "'-DCONFIG_PROVISIONING_HEADER_DIR=\"%s\"'" % header_str
+
     if role == ROLE_DONGLE:
         return (
             "west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build-radio -- "
-            "-DCONFIG_DONGLE_RADIO=y -DCONFIG_PROVISIONING_HEADER_DIR=%s" % header_dir
+            "-DCONFIG_DONGLE_RADIO=y %s" % prov_arg
         )
     return (
         "west build -b nrf52840dk/nrf52840 remote -d remote/build -- "
-        "-DCONFIG_PROVISIONING_HEADER_DIR=%s" % header_dir
+        "%s" % prov_arg
     )
 
 
