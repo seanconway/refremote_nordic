@@ -1,6 +1,6 @@
 # RefRemote — Plan, Status and Validation
 
-**Status as of 2026-08-13.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** and `RADIO_PROTOCOL.md` **v1.0** answer to them. The scoreboard application is at v3.0 (M1, complete). The dongle firmware is at v3.0, flashed and answering on hardware, with the no-radio baseline (V0–V6) closed. The radio is implemented on both sides and **confirmed on hardware**: a DK remote (RED) connects to the dongle over BLE, encrypted from the provisioned key, and reports `CONNECTED` to the scoreboard — W1's positive case. The A13 check is now implemented and all four of W1's negative-case builds (A12–A14, A19) are prepared and confirmed to compile (§8). **The next step is S3 in the work queue (§2) — hands on hardware.**
+**Status as of 2026-08-13.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** and `RADIO_PROTOCOL.md` **v1.0** answer to them. The scoreboard application is at v3.0 (M1, complete). The dongle firmware is at v3.0, flashed and answering on hardware, with the no-radio baseline (V0–V6) closed. The radio is implemented on both sides and **confirmed on hardware, W1 closed**: a DK remote (RED) connects to the dongle over BLE, encrypted from the provisioned key, and reports `CONNECTED` to the scoreboard, and all four negative cases (A12–A14, A19) refuse exactly as specified. **The next step is S5 in the work queue (§2) — hands on hardware.**
 
 **This document is forward-looking.** It carries the current state (§1), the work queue of alternating agent and bench steps (§2), the parked items with their unlock conditions (§3), the decisions that still bind (§4), the validation reference — rungs, procedures, pass criteria (§5), deployment validation (§6), unmeasured risks (§7), known gaps (§8), and the definition of done (§9). **The record of completed work, the results log and the project history live in [`HISTORY.md`](HISTORY.md)**, which is append-only and preserves its original section numbering — a citation of the old `PLAN.md` §2.x or §9.2/§9.3 resolves there unchanged.
 
@@ -25,7 +25,7 @@
 |---|---|---|
 | **M0** | USB link at v2.0, working on hardware | ✅ done — `HISTORY.md` §2.1 |
 | **M1** | Scoreboard application to v3.0, the functional specification, and the design system | ✅ done — `HISTORY.md` §2.3 |
-| **M2** | **The firmware programme** — dongle wire v3.0, the radio, and a DK remote, to an end-to-end demonstration | ▶ in progress — queue §2.1. Wire layer, provisioning and W1's positive case all green on hardware; W1's negative cases and W2–W5 remain. History: `HISTORY.md` §2.6–§2.8, §9.2 |
+| **M2** | **The firmware programme** — dongle wire v3.0, the radio, and a DK remote, to an end-to-end demonstration | ▶ in progress — queue §2.1. Wire layer, provisioning and W1 (both cases) all green on hardware; W2–W5 remain. History: `HISTORY.md` §2.6–§2.8, §9.2 |
 | **M3** | *Retired as a separate milestone — absorbed into M2* | number retired, not reused — see below |
 | **M4** | The **2:1** link — two peripherals, two connections, one central | queue §2.2 |
 | **M5** | Full-feature remote firmware on the DK — GPIO buttons, RGB indicators, ERM, nPM1300 | §2.3 |
@@ -80,19 +80,27 @@
 
 - [x] **S1 [AGENT] — Implement the A13 check.** `dongle/src/radio_ble.c` `handle_identity_read()` compares `RR_IDENTITY`'s reported `set_serial` against the dongle's own `PROV_RECORD.set_serial` and produces `ERR SET_MISMATCH` + disconnect on mismatch (`RADIO_PROTOCOL.md` §10.2, §14 A13). Rebuild all three configurations; both host suites green. *Closes the §8 A13 gap.* ✅ 2026-08-13 — `HISTORY.md` §9.2.
 - [x] **S2 [AGENT] — Prepare the W1 negative cases.** Generate deliberately-wrong provisioning headers and DK builds: A12 (wrong key), A13 (mismatched set serial), A14 (protocol major mismatch), A19 (all-zero key, remote side). `provision.py`/`build_set.ps1` already support building against an arbitrary header (§4.13). Write the flash-order walkthrough and per-case expected observations into S3's entry here. *Needs: nothing but the toolchain.* ✅ 2026-08-13 — `HISTORY.md` §9.2.
-- [ ] **S3 [BENCH] — W1 negative cases on hardware.** All four builds below are against the **RR-0006** set already on the bench dongle — flash the dongle itself only once, at the top, and swap RED between builds for each case:
+- [x] **S3 [BENCH] — W1 negative cases on hardware.** ✅ 2026-08-13, all seven steps run in order, every case matching its predicted wire signature exactly — `HISTORY.md` §9.2. **Closes W1.**
+- [x] **S4 [AGENT] — Fixes from S3; prepare W2/W3.** Nothing from S3 needed fixing — all seven steps passed on the first attempt, so this step is procedure prep only. Walkthrough written into S5 below. ✅ 2026-08-13.
+- [ ] **S5 [BENCH] — W2 uplink + W3 downlink.**
 
-  1. Flash the dongle with the S1-rebuilt `dongle/build-radio` (RR-0006, radio=y) — confirms the A13 fix hasn't regressed the positive case.
-  2. Flash RED from `remote/build-red` (RR-0006, unmodified). **Positive control — confirm `LINK … CONNECTED` before touching a negative case.** If this doesn't connect, stop; a negative case "passing" against a dongle that wouldn't connect to anything proves nothing.
-  3. Flash RED from `remote/build-red-A12` (`dongle/tools/out/RR-0006_red_A12` — wrong `set_key`, same address). *Expect:* no association ever completes; dongle-side diag shows `bt_conn_set_security failed` / `encryption failed`; scoreboard never reports RED `CONNECTED`. **No GATT read of any kind occurs** — there's no way to observe this directly, but nothing in the wire log should show a `RR_IDENTITY` read succeeding before the failure.
-  4. Flash RED from `remote/build-red-A13` (`RR-0006_red_A13` — `set_serial` mismatched to `RR-0006-BAD`, same key and address). *Expect:* encrypts and discovers normally, then the dongle disconnects immediately after reading `RR_IDENTITY`; `ERR SET_MISMATCH` on the wire; RED never reaches `CONNECTED`.
-  5. Flash RED from `remote/build-red-A14` (`RR-0006_red`, unmodified header, built with `-DCONFIG_REMOTE_TEST_RADIO_PROTO_MAJOR=2`). *Expect:* `ERR REMOTE_PROTO_MISMATCH` right after the `RR_IDENTITY` read; RED reported `DISCONNECTED`, not merely never-connected — this is the one case with a *different* wire signature from A12/A13, so confirm that difference is visible.
-  6. Flash RED from `remote/build-red-A19` (`RR-0006_red_A19` — all-zero `set_key`). *Expect:* `provisioning_validate()` rejects it before the radio ever initialises — RED never advertises, never attempts a connection at all, and blinks all four DK LEDs together (`fault_forever()`, `remote/src/main.c`). Nothing appears on the wire because there's nothing to appear — confirm the *absence* of any dongle-side connection attempt for RED during this step, not just the absence of `CONNECTED`.
-  7. Re-flash RED from `remote/build-red` (RR-0006, unmodified) and reconfirm `CONNECTED` — **the control that closes the rung**, proving the dongle itself wasn't left in a bad state by the negative cases above.
+  **W2 — uplink, one DK button at a time (`remote/BUILD_SPEC.md` §2):**
 
-  All five headers and builds already exist (`dongle/tools/provision_negatives.py`, S2) and are confirmed to configure and compile clean. *Pass criteria: §5.3 rung W1 — "a pass on the positive case alone is not a pass." Closes W1.*
-- [ ] **S4 [AGENT] — Fixes from S3; prepare W2/W3.** Whatever S3 surfaced, plus the bench procedures for uplink and downlink: the DK button map (`remote/BUILD_SPEC.md` §2 — gesture and semantic coverage, not button coverage), expected wire traffic per press, the `STATE`/`HAP`/`CFG` render checklist including the two observations the dongle board could never show (§5.6): `HAP RED` reaching a fitted LED, and `CFG` scaling acting on PWM.
-- [ ] **S5 [BENCH] — W2 uplink + W3 downlink.** All three gestures on the DK's four buttons with 600 ms hold and 150 ms repeat *measured, not assumed*; A4/A5/A6 counter cases. Downlink: indicators assert idempotently (A11), `ACK … SILENT` puts nothing on the air (A20 — verify by frame count, not by watching an LED). *Pass criteria: §5.3 rungs W2, W3. Picks up the parked `CFG`/`HAP RED` observability items (§3).*
+  1. Button 1 (`ADD_POINT`, P0.11), quick press. *Expect:* `EVT ADD_POINT PRESS RED <seq>` on the wire, score increments on the scoreboard, `ACK <seq>`, and a full-brightness `HAP RED TAP` pulse on LED1.
+  2. Button 2 (`TOGGLE_CLOCK`, P0.12), quick press (< 600 ms). *Expect:* `EVT TOGGLE_CLOCK PRESS RED <seq>` — confirms `PRESS` requires release before the threshold. Then hold *past* 600 ms and time it: `EVT … HOLD …` must fire **the instant the threshold crosses, not on release** (`remote/BUILD_SPEC.md` §4 rule 1) — watch the clock action land while the button is still down. Hold the same button 5 s straight: expect **exactly one** `HOLD`, never a repeat — the one button on the DK that proves non-repetition (rule 3).
+  3. Button 3 (`FORWARD`, P0.24), hold past 600 ms and keep holding. *Expect:* one `HOLD`, then `HOLD_REP` at a **measured** ~150 ms cadence — time ten of them, don't eyeball it — for as long as it's held, stopping immediately on release.
+  4. Button 4 (`F1`, P0.25), quick press, **with a ruleset loaded that leaves F1 inert** (folkstyle NFHS — `PROTOCOL.md` §5.2's own example). *Expect:* `ACK <seq> SILENT` and **nothing else** — no `HAP`, no `STATE` line at all. Confirmed by reading the wire log line by line, not by watching LED1 (A20) — the entire point is that a lamp which was never going to light proves nothing.
+
+  **A4/A5/A6, reconsidered while preparing this:** A4 (duplicate `CTR`) and A5 (gap) are Link-Layer retransmission/loss artifacts, not something a button press on a 3 cm bench link reliably produces on demand — they stay covered by W0's host-suite arithmetic until an actual radio-degradation opportunity exists (W7, range). **A6 (wrap) is the one of the three actually reachable here:** hold `FORWARD` continuously for ~40 s (255 × 150 ms ≈ 38 s) to walk `CTR` through 255→0, and confirm no gap is logged at the wrap boundary.
+
+  **W3 — downlink, via the app's raw command console** (`DetailPanel.jsx`'s System tab — the same one V1–V3 used, since the exclusive COM port rules out a bench terminal running alongside the app):
+
+  5. `STATE RED SOLID 00A0FF OFF 000000` → LED2 on; `STATE RED OFF 000000 OFF 000000` → LED2 off. Confirms assert-whole-state end to end. Colour stays unobservable here by design (§5.6 — mode only on a single-colour LED); `DN_INDICATOR`'s actual encode-idempotence (A11) is already host-suite-covered (`dongle/tests/rframe`), so this step is confirming the state machine around it, not re-proving the encoder.
+  6. `HAP RED TAP` → LED1 full-brightness pulse. `HAP RED BEAT` → LED1 pulse **distinctly dimmer**. This is the first time `HAP RED` has ever reached a fitted lamp — the dongle's own RED channel is permanently unfitted (`dongle/BOARD.md` §2) — closing that half of the parked observability row (§3) for good, not just for this session.
+  7. `CFG BOTH 20 60`, then repeat `HAP RED TAP` — confirm the pulse is visibly dimmer than at the default scale, closing the other half of the same parked row: `CFG` scaling was equally unobservable on the dongle's own board.
+  8. **What none of this proves:** LED brightness is not amplitude on a wrist — R3/R4 stay open until M5's real ERM, and colour/`LED_PWR` stay synthetic/unobservable until M5 too (§5.6). This closes an *observability* gap in the bench rig, not a hardware-fidelity question.
+
+  *Pass criteria: §5.3 rungs W2, W3.*
 - [ ] **S6 [AGENT] — W4/W5 instrumentation and procedures.** Latency-distribution capture for the `EVT`→`ACK`→render round trip (the app's ack-latency counters exist — `HISTORY.md` §2.3; add whatever pairing/export the distribution needs). Provocation procedures for A8 (late `ACK` never sent), A9 (second `ACK` replaces), A10 (`BEAT` never truncates a `TAP`). The four-relationship supervision matrix walkthrough for W5. Investigate in passing: is LE Flushable ACL Data usable in v3.4.0? (The deadline rule must hold without it — §4.8.)
 - [ ] **S7 [BENCH] — W4 round trip + W5 link state; the M2 demonstration.** Deadline rules provoked and observed (`taps_dropped_late` non-zero when provoked, zero when not); **A15** — app supervision expires, radio stays up, the remote renders link-lost (picks up the parked V5.1 remote half, §3); A16–A18, A7 reboot re-baseline, §9.4 debounce under power-cycling at the range edge (B4). Then the demonstration, run and recorded. *Pass criteria: §5.3 rungs W4, W5. Closes M2.*
 
@@ -305,7 +313,7 @@ The dongle is sealed — enclosure only exposes USB-C, no SWD probe on the bench
 
 The interface "works" in the sense that a happy path completed once. That is a much weaker claim than "reliable", and the gap between them is where this class of system fails: at hour three, on a cable pull, on a backgrounded tab, on someone else's laptop.
 
-**Ladder status at a glance:** V0–V6 green (V4 row 7, V6.4, V6.5 parked — §3); V7, V8 never run (queued S11, S12). W0 green; W1 positive case green, negative cases prepared and awaiting hardware (S3); W2–W8 never run (S5–S12).
+**Ladder status at a glance:** V0–V6 green (V4 row 7, V6.4, V6.5 parked — §3); V7, V8 never run (queued S11, S12). W0 and W1 green; W2–W8 never run (S5–S12).
 
 ### 5.1 Test rig
 
@@ -437,7 +445,7 @@ The counterpart to the V-ladder, for `RADIO_PROTOCOL.md`. The `A`-references are
 | Rung | Queue | What it isolates | Pass |
 |---|---|---|---|
 | **W0** ✅ | done 2026-08-12 | **Frame codec, on a host, no hardware** | A1–A7, A11, A20 green. The radio's V0 — `cd dongle/tests/rframe && make check`, 20 checks, 67 assertions. Re-run after any change to `rframe.c` |
-| **W1** ◐ | S3 | **Association and security.** One connection, encrypted from the provisioned key, no pairing procedure performed | `RR_IDENTITY` read and validated, CCCD subscribed, `LINK … CONNECTED` with a real RSSI — ✅ positive case 2026-08-13. Negative cases are the point: A12 no key, A13 set mismatch, A14 proto major, A19 unprovisioned. All four builds prepared and confirmed to compile 2026-08-13 (S2); **unrun on hardware**. **A pass on the positive case alone is not a pass** |
+| **W1** ✅ | done 2026-08-13 | **Association and security.** One connection, encrypted from the provisioned key, no pairing procedure performed | `RR_IDENTITY` read and validated, CCCD subscribed, `LINK … CONNECTED` with a real RSSI — positive case 2026-08-13. All four negative cases run 2026-08-13, each matching its predicted wire signature exactly: A12 (wrong key) — no `ERR`, connection never completes, only repeated `LINK … CONNECTING`; A13 (set mismatch) — `ERR SET_MISMATCH` + `LOG … set_serial mismatch`; A14 (proto major) — `ERR REMOTE_PROTO_MISMATCH` + `LOG … proto major mismatch`; A19 (unprovisioned remote) — nothing on the wire at all, all four DK LEDs blinking. Positive control reconfirmed afterward, including live button presses reaching the scoreboard. `HISTORY.md` §9.2 |
 | **W2** | S5 | **Uplink.** Button → `UP_INPUT` → `EVT` → scoreboard | All three gestures on the four DK buttons (§5.6); 600 ms hold and 150 ms repeat measured, not assumed; A4 duplicate, A5 gap, A6 wrap |
 | **W3** | S5 | **Downlink.** `STATE` → `DN_INDICATOR`, `HAP` → waveform, `CFG` → scaling | Indicators assert idempotently (A11); **`ACK … SILENT` puts nothing on the air** (A20) — verify by frame count, not by watching an LED that was never going to light |
 | **W4** | S6–S7 | **Round trip and the deadline rule** | `EVT`→`ACK`→render measured as a distribution. A8 a late `ACK` is not sent at all, A9 a second `ACK` replaces rather than queues, A10 a `BEAT` never truncates a `TAP`. `taps_dropped_late` non-zero when provoked and zero when not |
@@ -564,8 +572,6 @@ Gaps that are already scheduled point at their queue step or parked row rather t
 
 | Item | Impact |
 |---|---|
-| **W1's negative cases unrun** (A12–A14, A19 remote side) | The positive case alone is not a pass — these four are what stand between this product and a cross-associated match. Implementation (A13's check) and all four builds are ready — 2026-08-13 (S1, S2). → **S3** |
-| **A19's refuse-to-operate behaviour unconfirmed on hardware under §4.13's mechanism** | The case tested on a physical unit is a valid record, not an invalid one; the all-zero-key sentinel path has never run on hardware. → **S3** |
 | **Fault indication is invisible on the dongle** | `indicator_error()` drives the unfitted P0.08, so **no `ERR` produces any visible signal** — `APP_TIMEOUT` included. Kept deliberately (`dongle/BOARD.md` §2.2): errors already report on the wire, and moving them to the fitted lamp would destroy the asymmetry that proves routing. **"No blink" never means "no error"** |
 | **Every latency figure in `RADIO_PROTOCOL.md` §12 is arithmetic** | Predictions from documentation, never near this hardware. **Load-bearing**: §4.8 chooses rung 3 partly *because* the retransmission rate at 12 m is unmeasured, so measuring it (W7) is what would reopen the decision. R2 |
 | **Host suites are a remembered step** | `make check` is not wired into `west build` and there is no CI — nothing fails if it is skipped. §3 |
@@ -591,7 +597,7 @@ Gaps that are already scheduled point at their queue step or parked row rather t
 - [x] **W0 green** — `dongle/tests/rframe`, 20 checks (67 assertions), 0 failures, 2026-08-12
 - [x] V1–V6 pass at v3.0 with `CONFIG_DONGLE_RADIO=n` — the no-radio baseline, **and it stays re-runnable** (parked residue: §3)
 - [ ] Both host suites part of the routine build rather than a remembered step — **still remembered** (§3)
-- [ ] W1 pass *including* its negative cases — positive case green 2026-08-13, negative cases prepared 2026-08-13; **S3**
+- [x] W1 pass *including* its negative cases — positive case green 2026-08-13, all four negative cases green 2026-08-13
 - [ ] W2–W5 pass on one connection, with A15 and A20 — **S5–S7**
 - [ ] **The demonstration:** press on the DK → score on the scoreboard → tap rendered on that DK, and on that DK only — **S7**
 - [ ] W6–W7 pass on two connections, with the interval in use recorded against every latency figure — **S9, S11**
