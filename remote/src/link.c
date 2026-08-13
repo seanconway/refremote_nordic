@@ -475,7 +475,10 @@ int link_init(const struct provisioning_record *prov, struct k_work_q *workq)
 	k_work_init(&link_evt_work, link_evt_work_handler);
 
 	memset(identity_buf, 0, sizeof(identity_buf));
-	identity_buf[0] = 1; /* radio_proto_major */
+	/* CONFIG_REMOTE_TEST_RADIO_PROTO_MAJOR defaults to 1, the real value —
+	 * see remote/Kconfig. Only the A14 negative-case build ever sets it
+	 * to anything else. */
+	identity_buf[0] = CONFIG_REMOTE_TEST_RADIO_PROTO_MAJOR;
 	identity_buf[1] = 0; /* radio_proto_minor */
 	identity_buf[2] = (prov->role == PROVISIONING_ROLE_RED) ? 0x01 : 0x02;
 	identity_buf[3] = FW_MAJOR;

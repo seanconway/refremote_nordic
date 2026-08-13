@@ -174,6 +174,14 @@ static struct k_work_q *radio_workq;
 static struct bt_nrf_ltk set_ltk;
 static bool radio_ready_to_run;
 
+/* A13 (RADIO_PROTOCOL.md §3.2, §10.2): the dongle's own set_serial, held here
+ * so handle_identity_read() has something to compare RR_IDENTITY against.
+ * Copied from prov->set_serial in radio_init() — radio.h passes the whole
+ * record there, not just the association parameters, precisely so this
+ * comparison is possible. Wire-format width (12 bytes, NUL-padded within
+ * them), not the +1 caller convenience byte of struct provisioning_record. */
+static uint8_t own_set_serial[PROVISIONING_SERIAL_LEN];
+
 /* The shared initiating slot (header comment): the remote currently holding
  * the one system-wide outstanding bt_conn_le_create(), or NULL if neither is
  * searching right now. Only ever written on radio_workq. */
@@ -631,14 +639,15 @@ static void handle_identity_read(struct remote_state *rs, uint8_t err,
 
 	/* A13: set_serial is a second lock on a door §10.3's key already
 	 * bolts — a mismatch here is a bench fault (a unit provisioned for a
-	 * different set), not a security event. provisioning_record.set_serial
-	 * is not available here by design — radio.h passes only the
-	 * association parameters, not the whole record, and RP §10.1's
-	 * provisioning check already ran at boot. The comparison against
-	 * *our* set_serial (identity_buf[8..20)) is deferred to a future
-	 * revision if a real mismatch is ever observed on the bench. Recorded
-	 * rather than silently skipped.
-	 */
+	 * different set), not a security event. Compared as the raw 12-byte
+	 * wire field, not as a NUL-terminated C string: a bench-fault serial
+	 * that happens to lack a NUL within the field is exactly the kind of
+	 * malformed input §10.2 exists to catch, not a case to give a free
+	 * pass by stopping at the first NUL. */
+	if (memcmp(&rs->identity_buf[8], own_set_serial, PROVISIONING_SERIAL_LEN) != 0) {
+		fail_connection(rs, "RR_IDENTITY set_serial mismatch", "SET_MISMATCH");
+		return;
+	}
 
 	start_subscribe(rs);
 }
@@ -1096,6 +1105,7 @@ int radio_init(const struct radio_cb *cb, struct k_work_q *workq,
 	bt_set_bondable(false);
 
 	memcpy(set_ltk.val, prov->set_key, sizeof(set_ltk.val));
+	memcpy(own_set_serial, prov->set_serial, sizeof(own_set_serial));
 
 	connect_owner = NULL;
 	k_work_init_delayable(&connect_yield, connect_yield_handler);
