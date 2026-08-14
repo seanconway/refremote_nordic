@@ -29,7 +29,7 @@
 | **M3** | *Retired as a separate milestone — absorbed into M2* | number retired, not reused — see below |
 | **M4** | The **2:1** link — two peripherals, two connections, one central | queue §2.2 |
 | **M5** | Full-feature remote firmware on the DK — GPIO buttons, RGB indicators, ERM, nPM1300 | §2.3 |
-| **M6** | Custom remote PCB designed | §2.3 — **gated on R3, R4, R6 measurements** |
+| **M6** | Custom remote PCB designed | §2.3 — gated on M4 and M5 closing, **not** on R3/R4/R6 being confirmed (§4.15 — they can't be, pre-PCB) |
 | **M7** | Firmware ported to the custom remotes; system validated on production-shaped hardware | §2.3 |
 | **M8** | Custom dongle, for BOM cost — **optional** | §2.3 |
 | **M9** | Deployment validation and MVP hardening — USB identity, ruleset verification, §6 and §8 | §2.3 — runs alongside from M5 onward |
@@ -66,13 +66,13 @@
 | Phase | Steps | What is new, and therefore what a failure means | Hardware |
 |---|---|---|---|
 | 1–2 | **M2** — S1–S7 | One radio connection, then the remote end: real presses, real rendering, a real end-to-end loop | Product dongle + nRF52840 DK |
-| 3 | **M4** — S8–S12 | The **second** connection. A failure is central scheduling, routing or skew — nothing else changed | + PCA10059 as remote #2, then the spare MDBT50Q-CX-40 (§4.9) |
-| 4 | **M5** | The remote's real peripherals — seven buttons, RGB, an ERM, a PMIC. A failure is hardware or drivers, not protocol | + GPIO harness, ERM, nPM1300-EK |
-| 5 | **M6** | Nothing runs. Schematic, layout, BOM, enclosure — **inputs are M4 and M5 measurements** | — |
+| 3 | **M4** — S8–S9, fast path | The **second** connection. A failure is central scheduling, routing or skew — nothing else changed. Deeper validation (S10–S12) deferred to the PCB fab wait, §4.15 | + PCA10059 as remote #2, then the spare MDBT50Q-CX-40 (§4.9) |
+| 4 | **M5** | The remote's real peripherals — seven buttons, RGB, an ERM, a PMIC. A failure is hardware or drivers, not protocol. Also produces M6's design-target estimates for R3/R4/R6 (§4.15) | + GPIO harness, ERM, nPM1300-EK |
+| 5 | **M6** | Nothing runs. Schematic, layout, BOM, enclosure — **inputs are M4's number and M5's estimates, not confirmed measurements** (§4.15) | — |
 | 6 | **M7** | The custom board. A failure is the port or the board | Custom remote PCBs |
 | 7 | **M8** | The custom dongle. Optional, cost-driven, deliberately last | Custom dongle |
 
-**Two ordering constraints run backwards through this table:** M6 cannot start before R6 has a number (battery capacity is a PCB decision and the connection interval is its dominant input), and cannot start before R3 and R4 have an answer (the dual-haptic contingency of `SCOPE.md` §9.2 must resolve while it is still a breadboard question). §7.
+**One ordering constraint runs backwards through this table:** M6 needs M4's connection-interval headroom number and M5's best-available ERM/current-draw estimates as **design inputs** — it does not wait for R3, R4 or R6 to be *confirmed*, because none of the three can be, before the enclosure and strap that determine them exist. §4.15, §7.
 
 ### 2.1 Finishing M2 — one connection, ending in the demonstration
 
@@ -120,11 +120,12 @@ What M4 exists to establish (each needs the second connection to mean anything):
 | 5 | Beat-on-owner-only, on real hardware | The emulator validated the app's half (§5.5). The radio half is new |
 | 6 | Density behaviour, first look | Two connections from one central is the smallest system with an aggregate to degrade |
 
+**Fast path to M5** — the minimum that establishes the 2:1 link actually works, not the full validation ladder:
+
 - [ ] **S8 [AGENT] — PCA10059 second-remote firmware (GREEN).** The minimal peripheral of §4.9: hold a connection, consume the downlink, generate uplink at realistic rates via one button plus a self-stimulus timer (the same trick `TEST 2` plays on the dongle), report telemetry. Its RGB LED renders `DN_INDICATOR` **colour** — the only surface before M5 that can. Board target `nrf52840dongle/nrf52840`, GREEN provisioning from the set.
-- [ ] **S9 [BENCH] — W6, two connections.** GREEN's W1 positive case rides along. 7.5 ms clean on the pair — no dropped connection events, no event-length overruns, interval reported in the setup `LOG` line. **B6: taps land on the originating remote only** — press RED and GREEN in quick succession. Beat on the owner only, from real hardware. R5 skew first measurement. B2 with the drop counter watched. *Pass criteria: §5.3 rung W6.*
-- [ ] **S10 [AGENT] — Scripted V6.4 + soak tooling.** The 10× reconnect test with programmatic observation (drive the reconnect, read `beatsSent`/wire-log timestamps — its unlock condition, §3, is now met). Verify the V8/W8 soak instrumentation end to end: diagnostics export at start *and* end, counters monotonic.
-- [ ] **S11 [BENCH] — W7 range and density; second-dongle rungs.** Swap the spare MDBT50Q-CX-40 in as remote #2 (§4.9 — this is an antenna-and-module measurement). 12 m with body shadowing, dongle in a laptop port below table height, p99 not median. Escalation order if it does not close is fixed: USB extension cable, then a placement constraint in the documentation, then transmit power. Same session, with a second flashed dongle in hand: **V6.5** (mid-match dongle swap — the field-substitution procedure of `SCOPE.md` §8.6) and **V7** (version guard). *Pass criteria: §5.3 rung W7, §5 rungs V6.5/V7.*
-- [ ] **S12 [BENCH, overnight] — V8 + W8 soak, and the regression list.** ≥4 h with both remotes connected and pressing; `radio_gap`/`radio_dup` accounted for; no transmit-ring drops beyond `BEAT`; B1 workqueue contention re-measured with the radio live; V4 and V5 re-run underneath it; the full §5.4 list walked. Also the deferred full-ladder QC re-run this hardware finally allows. *Pass criteria: §5 rung V8, §5.3 rung W8.*
+- [ ] **S9 [BENCH] — W6, two connections: does it actually work.** GREEN's W1 positive case rides along. 7.5 ms clean on the pair — no dropped connection events. **B6: taps land on the originating remote only** — press RED and GREEN in quick succession; this is the one check that can't be skipped, since a routing bug here is a scoring-integrity defect, not a nice-to-have. Beat on the owner only, from real hardware. *Pass criteria: §5.3 rung W6 — the basic case, not the exhaustive one.* **Closes M4's gate on M5.**
+
+**Deferred, not skipped** — moved to the parked table (§3), re-admitted by the PCB fab wait (after M6 ships) or M9: the old S10 (scripted V6.4 + soak tooling), S11 (W7 range/density, V6.5 dongle swap, V7 version guard), and S12 (the overnight V8/W8 soak). None of these gate M5 or M6; they gate confidence in a system that, by M6, is about to change shape anyway (§4.15).
 
 **One trap on M4 numbers:** a one-connection latency figure is not a two-connection latency figure. Do not carry a W4 number forward past W6.
 
@@ -132,11 +133,11 @@ What M4 exists to establish (each needs the second connection to mean anything):
 
 Planned deliberately at low resolution; detailing them now would re-create the deferral noise this document was restructured to remove. Each gets its own queue steps when its predecessor closes.
 
-**M5 — the full-feature remote, on the DK.** The DK's GPIO carries what its onboard peripherals could not: seven buttons in the FS §3.1 layout (debounce 15 ms), four RGB indicators rendering `DN_INDICATOR` in colour, an ERM + driver IC with the full waveform table, `DN_CONFIG` scaling that **preserves the `BEAT`:`TAP` ratio** (`RADIO_PROTOCOL.md` §7.3), nPM1300-EK integration (charge, fuel gauge, regulator, USB-C) retiring the synthetic `battery_pct` — the last fake value in the system — and the remote-local behaviours with no wire representation (FS §10.2). **M5 is where R3, R4 and R6 are settled, and settling them is an exit criterion, not a nice-to-have** — all three are inputs to M6, each with a hardware contingency behind it. Measure with the motor on a strap on an actual wrist, wired back to the DK: the motor's mounting is the variable that matters, and it is the one thing that can be made representative early.
+**M5 — the full-feature remote, on the DK.** The DK's GPIO carries what its onboard peripherals could not: seven buttons in the FS §3.1 layout (debounce 15 ms), four RGB indicators rendering `DN_INDICATOR` in colour, an ERM + driver IC with the full waveform table, `DN_CONFIG` scaling that **preserves the `BEAT`:`TAP` ratio** (`RADIO_PROTOCOL.md` §7.3), nPM1300-EK integration (charge, fuel gauge, regulator, USB-C) retiring the synthetic `battery_pct` — the last fake value in the system — and the remote-local behaviours with no wire representation (FS §10.2). **M5 produces the best available estimate for R3, R4 and R6 — a design target for M6, not a closed measurement** (§4.15): a motor on a strap wired back to the DK is the most representative rig that can exist before the enclosure does, and it's worth building for exactly that reason, but it cannot settle a question the final mechanical coupling (housing, strap material and tension) still has a vote in. Treat its numbers as what M6 designs against, not as proof M6 will be right.
 
-**M6 — the custom remote PCB.** No firmware runs. Inputs are the M4 and M5 measurements; output is a board. Nothing about the hardware design is recorded anywhere in this repository yet. Open items at least: module selection (an MDBT50Q variant keeps the RF characterisation), the ERM and driver chosen at M5 or the dual-motor contingency, nPM1300 as the production part, battery chemistry and capacity sized from R6 with headroom (§4.8), the FS §3.1 button mechanics and oversized `TOGGLE_CLOCK` datum, four RGB indicators adjacent to their buttons, USB-C charging, APPROTECT as a manufacturing step, and **a DFU strategy for the remotes, which exists in no document** (§8).
+**M6 — the custom remote PCB.** No firmware runs. Inputs are M4's connection-interval headroom and M5's ERM/current-draw estimates — best-available numbers, designed against, not measurements the board waits to be confirmed. Nothing about the hardware design is recorded anywhere in this repository yet. Open items at least: module selection (an MDBT50Q variant keeps the RF characterisation), the ERM and driver chosen at M5 or the dual-motor contingency, nPM1300 as the production part, battery chemistry and capacity sized from R6's estimate with headroom (§4.8), the FS §3.1 button mechanics and oversized `TOGGLE_CLOCK` datum, four RGB indicators adjacent to their buttons, USB-C charging, APPROTECT as a manufacturing step, and **a DFU strategy for the remotes, which exists in no document** (§8). **If M7 finds an estimate wrong, that is a second PCB spin** — an accepted cost of this ordering, not evidence the ordering was wrong (§4.15).
 
-**M7 — port and validate on custom hardware.** The firmware is M5's with the board layer swapped; M7's job is to test that claim rather than assume it: the full radio ladder and §5.4 regression list re-run on production-shaped hardware, then the parts of §7 only real remotes reach — B6 on two wrists, B8's collision, R3/R4 through the real enclosure and strap, R5 during live matches, R6 over a full ten-hour day. First point a complete officiating set exists, so V6.5 and `SCOPE.md` §8.6 become testable end to end.
+**M7 — port and validate on custom hardware.** The firmware is M5's with the board layer swapped; M7's job is to test that claim rather than assume it: the full radio ladder and §5.4 regression list re-run on production-shaped hardware, then the parts of §7 only real remotes reach — B6 on two wrists, B8's collision, **R3/R4 through the real enclosure and strap and R6 over a full ten-hour day, closed for real here rather than estimated at M5** (§4.15), R5 during live matches. First point a complete officiating set exists, so V6.5 and `SCOPE.md` §8.6 become testable end to end.
 
 **M8 — a custom dongle, optional.** Cost-driven, deliberately last. It changes the RF platform underneath a validated system: everything measured at M4 and M7 about range and density is a property of the MDBT50Q module, and a custom dongle re-opens all of it. If BOM cost justifies that, the re-measurement is part of the milestone.
 
@@ -150,13 +151,14 @@ Deferred work in one place, each with the condition that re-admits it. **A parke
 
 | Item | Why parked | Unlock condition | Re-entry |
 |---|---|---|---|
-| **V4 row 7** — burst suppression observed on the wire | An operator click dispatches the same `INPUT` a press would but produces no wire `EVT`, so there is nothing to suppress against; mechanism is unit-tested (`DongleService.test.js`) | Dongle-originated `EVT`s under app load — real presses or `TEST` modes | S12 soak, or any W2+ session |
+| **S10–S12** — scripted V6.4/soak tooling, W7 range/density, V6.5 dongle swap, V7 version guard, the V8/W8 overnight soak | None of it gates M5 or M6 (§4.15) — it's confidence-building on a system about to change shape at M6 anyway | The PCB fab wait (after M6 ships) | Re-enters the queue as **S10, S11, S12** unchanged; only their timing moved |
+| **V4 row 7** — burst suppression observed on the wire | An operator click dispatches the same `INPUT` a press would but produces no wire `EVT`, so there is nothing to suppress against; mechanism is unit-tested (`DongleService.test.js`) | Dongle-originated `EVT`s under app load — real presses or `TEST` modes | S12 soak (PCB fab wait), or any W2+ session |
 | **V5.1, remote-render half** — remotes render link-lost on app timeout | No remote existed; `radio_null` stub | DK remote connected | **S7** (W5/A15) |
-| **V5.3 at 30 s+** — sleep long enough that the OS tears down the USB device | 15 s pass pinned the short-sleep case only | Nothing — cheap bench add-on | Any bench session; fold into S12 |
-| **V6.4** — 10× reconnect, no leaked readers/writers | A stopwatch on a `PING` interval can't catch a one-interval leak; needs scripted observation | Scripting, not hardware | **S10** |
-| **V6.5** — mid-match dongle swap | Needs a second flashed dongle | Second dongle flashed (M4) | **S11** |
-| **V7** — version guard | Cheap but low-yield until a mixed-firmware fleet is possible | Second dongle exists | **S11** |
-| **V8 / W8** — soak | Runs overnight once the configuration is stable, rather than blocking progress | S1–S9 stable | **S12** |
+| **V5.3 at 30 s+** — sleep long enough that the OS tears down the USB device | 15 s pass pinned the short-sleep case only | Nothing — cheap bench add-on | Any bench session; fold into S12 (PCB fab wait) |
+| **V6.4** — 10× reconnect, no leaked readers/writers | A stopwatch on a `PING` interval can't catch a one-interval leak; needs scripted observation | Scripting, not hardware | **S10**, PCB fab wait |
+| **V6.5** — mid-match dongle swap | Needs a second flashed dongle | Second dongle flashed (M4) | **S11**, PCB fab wait |
+| **V7** — version guard | Cheap but low-yield until a mixed-firmware fleet is possible | Second dongle exists | **S11**, PCB fab wait |
+| **V8 / W8** — soak | Runs overnight once the configuration is stable, rather than blocking progress | S1–S9 stable | **S12**, PCB fab wait |
 | **R1 test** — background-tab throttling vs the heartbeat | Wake lock + banner applied at M1; the test establishing whether that suffices has not run | Nothing — runnable today, needs a 6+ min procedure | M9, or any idle bench slot; the Web Worker is built only if the test fails |
 | **Emulator: no `LOG counters` lines** | Surfaced by the wire-log diff; app's counter path never exercised against the emulator | wrsl-app work, any time | With the next emulator change |
 | **Emulator: `ECHO` collapses runs of spaces** | `args.join(' ')` vs the firmware's verbatim raw line; firmware is correct | wrsl-app work, any time | With the next emulator change |
@@ -314,6 +316,16 @@ The dongle is sealed — enclosure only exposes USB-C, no SWD probe on the bench
 **Confirmed present**: `CONFIG_BT_CTLR_LE_FLUSHABLE_ACL_DATA`, in the SoftDevice Controller since NCS v3.3.0 (nordic-mcp, `nrfxlib/softdevice_controller/CHANGELOG.html`), still experimental in v3.4.0. **Confirmed not a free switch**: the feature is listed only under the controller's **Multirole** column, never Central-only or Peripheral-only (`nrfxlib/softdevice_controller/README.html`'s feature table) — and enabling it is itself one of the OR-conditions that select `CONFIG_BT_LL_SOFTDEVICE_MULTIROLE` (`kconfig_diff.html`). The dongle's `prj.conf` sets no explicit controller-role Kconfig today, which is consistent with a Central-only resolution — meaning flipping this on would move the controller into a different role configuration entirely, with its own scheduling behaviour, not just add a flush timeout to the existing one.
 
 **Decision: stays off through M2 and M4.** A controller-mode change is exactly the kind of thing that should be evaluated alongside M4's actual two-connection scheduling measurements (S9, W6), not folded into a one-line Kconfig flip at M2 on the strength of a single connection. Mechanisms 1 and 2 (§8.3) do not depend on it, and mechanism 1 is confirmed working end to end (S3–S5). Revisit only if a measured latency shortfall at M4 or M6 specifically implicates the transmit queue holding a stale frame — nothing so far does.
+
+### 4.15 R3, R4 and R6 are design targets for M6, not gates on it — reverses the framing in §1/§2/§7 as they stood through 2026-08-13
+
+Every prior version of this document treated R3 (ERM haptic range), R4 (`BEAT`/`TAP` perceptibility) and R6 (ten-hour battery life) as risks M5 would *measure*, closing them before M6 — the custom PCB — was allowed to start. That framing doesn't survive contact with what a DK-tethered bench rig actually is: a motor wired to a development board, on a bench strap, is not the enclosure, is not the production strap, and is not the production PCB's antenna or regulator. None of the three questions R3/R4/R6 ask can be fully answered by anything that exists before M6 ships a board, because the mechanical and electrical coupling each one depends on — housing damping, strap tension and material, antenna efficiency, regulator losses — **is what M6 produces**, not something available earlier to measure against.
+
+**The reframing:** M5's rig produces the best estimate obtainable before the enclosure exists, and that estimate is what M6 designs the board against — a design target, not a pass/fail gate. Real closure happens at M7, once the actual PCB, enclosure and strap exist to measure against. If M7 finds an M5 estimate wrong — the wrong motor, insufficient battery headroom — that is a second PCB spin. **A second spin is an accepted, ordinary cost of this sequence, not a failure the old gate was trying to prevent.** The old framing's real effect was to hold M6 open indefinitely waiting for a confirmation that structurally could not arrive before M6 itself did — a gate that could never be satisfied honestly, only worked around by treating a provisional bench number as if it were final.
+
+**What this does not change:** M5 still measures R3/R4/R6 as carefully as a bench rig allows — the estimate still has to be a real one, not a shrug — and M7's re-measurement against production-shaped hardware is still on the definition of done (§9), not optional. What changes is only whether M6 *waits* for a confirmation that was never going to be honest before M6 existed.
+
+**Consequence for the queue:** M4 (§2.2) is trimmed to the minimum that establishes the 2:1 link actually works — S8 and a leaner S9 — with the deeper validation work (scripted reconnect tooling, range/density, dongle-swap and version-guard rungs, the overnight soak) moved to the parked table (§3) rather than sitting between "now" and M5/M6. The PCB fabrication wait after M6 ships is explicitly one of the windows that re-admits them, alongside M9.
 
 ---
 
@@ -558,21 +570,21 @@ At v2.0 this threatened only the liveness proof, because the heartbeat was gener
 
 **Why it matters:** exceeding the window means no tap. The referee follows the rule correctly — *no tap means the press did not land, press again* — and scores twice. The failure is silent and looks like referee error.
 
-### R3 — The ERM has to cover the whole haptic range
+### R3 — The ERM has to cover the whole haptic range — **design target, closed at M7, §4.15**
 
-FS §3.3 assumes one ERM plus driver IC delivers unmistakable expiry amplitude, a countable reduced-amplitude heartbeat, and an acknowledgement inside 120 ms. Motor spin-up alone is allocated 20 ms of the budget and is the hard floor. This cannot be settled from datasheet figures. Contingency is an LRA or a dual-motor revision, which affects enclosure and cost.
+FS §3.3 assumes one ERM plus driver IC delivers unmistakable expiry amplitude, a countable reduced-amplitude heartbeat, and an acknowledgement inside 120 ms. Motor spin-up alone is allocated 20 ms of the budget and is the hard floor. This cannot be settled from datasheet figures, **and it cannot be fully settled from a DK-wired breadboard motor either** — the mechanical coupling that actually delivers the sensation (housing, strap material and tension) doesn't exist until the enclosure does. M5 measures the best rig that can exist before then and treats the result as a design target, not a closed question; M7 is where it closes for real, against the actual enclosure and strap. Contingency is an LRA or a dual-motor revision, which affects enclosure and cost — cheaper to discover at M7 than to have guessed wrong at M6, but M6 has to design against *something*, so M5's estimate is what it gets.
 
-### R4 — Amplitude separation has to be perceptible
+### R4 — Amplitude separation has to be perceptible — **design target, closed at M7, §4.15**
 
-Whether the difference between `BEAT` and `TAP` is reliably distinguishable on the wrist, in motion, through a strap, by a referee not attending to it. This is the assumption repeated-press scoring rests on (FS §11.1, §15.5), and it fails quietly: a referee who miscounts a near fall has no way to know.
+Whether the difference between `BEAT` and `TAP` is reliably distinguishable on the wrist, in motion, through a strap, by a referee not attending to it. This is the assumption repeated-press scoring rests on (FS §11.1, §15.5), and it fails quietly: a referee who miscounts a near fall has no way to know. Same limitation as R3: a bench rig can confirm the waveform table's *character* is right, not that it survives a real strap on a moving wrist. M5's confirmation is provisional; M7's is the one that counts.
 
 ### R5 — Event ordering under rapid exchange
 
-Order of receipt is authoritative, assuming referee input intervals comfortably exceed transit variance. Log inter-press intervals during live matches against measured transit jitter. If it fails, remote-side sequencing is required, which adds protocol complexity (FS §15.1).
+Order of receipt is authoritative, assuming referee input intervals comfortably exceed transit variance. Log inter-press intervals during live matches against measured transit jitter. If it fails, remote-side sequencing is required, which adds protocol complexity (FS §15.1). Unlike R3/R4/R6, this is a radio-timing property rather than a mechanical or enclosure-dependent one, so it is measurable meaningfully before the custom PCB exists — the DK and PCA10059/MDBT50Q-CX-40 stand-ins carry the same radio stack.
 
-### R6 — Ten-hour battery life
+### R6 — Ten-hour battery life — **design target, closed at M7, §4.15**
 
-Measure average current attributable to the radio at the connection cadence the acknowledgement budget requires, and to a reduced-amplitude 1 Hz beat over a representative match. The motor is expected to dominate. Heartbeat suppression is **not** available as an unconditional mitigation, because the beat carries the running/paused distinction — any reduction in beat density must be accompanied by the LED taking that distinction over, which is the basis of the planned power-saving mode (FS §11.2).
+Measure average current attributable to the radio at the connection cadence the acknowledgement budget requires, and to a reduced-amplitude 1 Hz beat over a representative match. The motor is expected to dominate. Heartbeat suppression is **not** available as an unconditional mitigation, because the beat carries the running/paused distinction — any reduction in beat density must be accompanied by the LED taking that distinction over, which is the basis of the planned power-saving mode (FS §11.2). **A DK-tethered current measurement is a component-level estimate, not a system one** — real draw depends on the production PCB's antenna efficiency and regulator losses, neither of which exist until M6 ships a board. M5 gives M6 a sizing target with headroom (§4.8); M7's ten-hour session is the actual measurement.
 
 ---
 
@@ -593,7 +605,7 @@ Gaps that are already scheduled point at their queue step or parked row rather t
 | **USB identity is Zephyr's test VID/PID; `requestPort()` has no `filters`** | Blocks the enterprise deployment path (D5); users can select the wrong serial device. §3, long-lead |
 | **Connection errors surface raw DOMException text** | A policy block is indistinguishable from a cancelled picker (D4). §3 |
 | **Heartbeat survives only in the foreground** | Wake lock and banner applied; the Web Worker that would actually keep it running is not. R1's test decides — §3 |
-| **Haptics and indicators unvalidated on the surface that carries them** | No real ERM, RGB or strap until M5 — every R3/R4 requirement is open until then |
+| **Haptics and indicators unvalidated on the surface that carries them** | No real ERM, RGB or strap until M5, and even M5's rig is a design-target estimate, not closure — R3/R4/R6 don't close until M7, against the real enclosure (§4.15) |
 | **Design-system fonts fetch from Google Fonts** | Survivable (pre-event load caches; system-face fallback), but self-hosted `.woff2` is the correct fix when licensed binaries exist. §3 |
 
 ---
@@ -612,9 +624,10 @@ Gaps that are already scheduled point at their queue step or parked row rather t
 - [x] W2 and W3 pass, including A20 — 2026-08-13
 - [ ] W4–W5 pass on one connection, with A15 (A9 excluded, §8) — **S7**
 - [ ] **The demonstration:** press on the DK → score on the scoreboard → tap rendered on that DK, and on that DK only — **S7**
-- [ ] W6–W7 pass on two connections, with the interval in use recorded against every latency figure — **S9, S11**
+- [ ] W6 (basic case) pass on two connections — **S9**; W7 (range/density, full latency-figure recording) — **S11, PCB fab wait**
 - [ ] V8 clean for ≥4 h with zero sequence gaps and zero applied duplicates; W8 clean with both remotes connected, `radio_gap`/`radio_dup` accounted for — **S12**
-- [ ] R1–R6 measured, with mitigations applied where they fail — **R3, R4 and R6 before M6 opens** (§2)
+- [ ] R1, R2, R5 measured, with mitigations applied where they fail — before M6 opens (§2)
+- [ ] R3, R4, R6 given a design-target estimate at M5 for M6 to build against — **not** a gate; closed for real at M7 (§4.15)
 - [ ] D1–D8 pass; real VID/PID assigned and `requestPort()` filtered — M9
 - [ ] Every ruleset in the library checked against the published rulebook for the current cycle — M9
 - [ ] §5.4 re-run in full after the radio lands (S12), and again at M7 on custom hardware
