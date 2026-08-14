@@ -1,6 +1,6 @@
 # RefRemote — Plan, Status and Validation
 
-**Status as of 2026-08-13.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** and `RADIO_PROTOCOL.md` **v1.0** answer to them. The scoreboard application is at v3.0 (M1, complete). The dongle firmware is at v3.0, flashed and answering on hardware, with the no-radio baseline (V0–V6) closed. The radio is implemented on both sides and **confirmed on hardware, W0–W3 closed**: a DK remote (RED) connects to the dongle over BLE, all four W1 negative cases refuse exactly as specified, and a full press-to-score-to-haptic round trip runs end to end with uplink and downlink both confirmed on real hardware. W4/W5 bench procedures are written; one real gap surfaced while writing them (A9, §8) rather than at the bench. **The next step is S7 in the work queue (§2) — hands on hardware, and the M2 demonstration.**
+**Status as of 2026-08-13.** `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` are the authority on direction; `PROTOCOL.md` **v3.0** and `RADIO_PROTOCOL.md` **v1.0** answer to them. The scoreboard application is at v3.0 (M1, complete). The dongle firmware is at v3.0, flashed and answering on hardware, with the no-radio baseline (V0–V6) closed. The radio is implemented on both sides and **confirmed on hardware, W0–W3 closed**: a DK remote (RED) connects to the dongle over BLE, all four W1 negative cases refuse exactly as specified, and a full press-to-score-to-haptic round trip runs end to end with uplink and downlink both confirmed on real hardware. **The development bottleneck is PCB fabrication lead time, not bench validation** (§4.16): the near-term line is S7 (the M2 demonstration) → S8–S9 (proving the 2:1 link, M4's fast path) → S13–S19 (M5, the full-feature DK remote) → M6's PCB design and order. W4/W5's edge-case matrix, W7 range/density, and the rest of M4's deeper validation all still run — during the PCB fab wait, on firmware that has stopped changing shape (S20, S10–S12). **The next step is S7.**
 
 **This document is forward-looking.** It carries the current state (§1), the work queue of alternating agent and bench steps (§2), the parked items with their unlock conditions (§3), the decisions that still bind (§4), the validation reference — rungs, procedures, pass criteria (§5), deployment validation (§6), unmeasured risks (§7), known gaps (§8), and the definition of done (§9). **The record of completed work, the results log and the project history live in [`HISTORY.md`](HISTORY.md)**, which is append-only and preserves its original section numbering — a citation of the old `PLAN.md` §2.x or §9.2/§9.3 resolves there unchanged.
 
@@ -25,14 +25,14 @@
 |---|---|---|
 | **M0** | USB link at v2.0, working on hardware | ✅ done — `HISTORY.md` §2.1 |
 | **M1** | Scoreboard application to v3.0, the functional specification, and the design system | ✅ done — `HISTORY.md` §2.3 |
-| **M2** | **The firmware programme** — dongle wire v3.0, the radio, and a DK remote, to an end-to-end demonstration | ▶ in progress — queue §2.1. Wire layer, provisioning and W1 (both cases) all green on hardware; W2–W5 remain. History: `HISTORY.md` §2.6–§2.8, §9.2 |
+| **M2** | **The firmware programme** — dongle wire v3.0, the radio, and a DK remote, to an end-to-end demonstration | ▶ closing — queue §2.1. Wire layer, provisioning, W1–W3 all green on hardware; **only S7 (the demonstration itself) remains** — W4/W5's edge-case matrix moved to S20 (§4.16). History: `HISTORY.md` §2.6–§2.8, §9.2 |
 | **M3** | *Retired as a separate milestone — absorbed into M2* | number retired, not reused — see below |
-| **M4** | The **2:1** link — two peripherals, two connections, one central | queue §2.2 |
-| **M5** | Full-feature remote firmware on the DK — GPIO buttons, RGB indicators, ERM, nPM1300 | §2.3 |
-| **M6** | Custom remote PCB designed | §2.3 — gated on M4 and M5 closing, **not** on R3/R4/R6 being confirmed (§4.15 — they can't be, pre-PCB) |
-| **M7** | Firmware ported to the custom remotes; system validated on production-shaped hardware | §2.3 |
-| **M8** | Custom dongle, for BOM cost — **optional** | §2.3 |
-| **M9** | Deployment validation and MVP hardening — USB identity, ruleset verification, §6 and §8 | §2.3 — runs alongside from M5 onward |
+| **M4** | The **2:1** link — two peripherals, two connections, one central | queue §2.2 — trimmed to the fast path, S8–S9 (§4.16) |
+| **M5** | Full-feature remote firmware on the DK — GPIO buttons, RGB indicators, ERM, nPM1300 | queue §2.3, S13–S19 |
+| **M6** | Custom remote PCB designed | §2.4 — gated on M4 and M5 closing, **not** on R3/R4/R6 being confirmed (§4.15 — they can't be, pre-PCB) |
+| **M7** | Firmware ported to the custom remotes; system validated on production-shaped hardware | §2.4 |
+| **M8** | Custom dongle, for BOM cost — **optional** | §2.4 |
+| **M9** | Deployment validation and MVP hardening — USB identity, ruleset verification, §6 and §8 | §2.4 — runs alongside from M5 onward |
 
 **M3 is retired rather than renumbered, and M4–M9 keep their numbers.** The last renumber left references pointing at milestones that had moved (`HISTORY.md` §9.3, 2026-08-10); a stable reference is worth more than a tidy sequence. The same rule governs the queue: **closed step numbers are never reused.**
 
@@ -67,7 +67,7 @@
 |---|---|---|---|
 | 1–2 | **M2** — S1–S7 | One radio connection, then the remote end: real presses, real rendering, a real end-to-end loop | Product dongle + nRF52840 DK |
 | 3 | **M4** — S8–S9, fast path | The **second** connection. A failure is central scheduling, routing or skew — nothing else changed. Deeper validation (S10–S12) deferred to the PCB fab wait, §4.15 | + PCA10059 as remote #2, then the spare MDBT50Q-CX-40 (§4.9) |
-| 4 | **M5** | The remote's real peripherals — seven buttons, RGB, an ERM, a PMIC. A failure is hardware or drivers, not protocol. Also produces M6's design-target estimates for R3/R4/R6 (§4.15) | + GPIO harness, ERM, nPM1300-EK |
+| 4 | **M5** — S13–S19 | The remote's real peripherals — seven buttons, RGB, an ERM, a PMIC. A failure is hardware or drivers, not protocol. Also produces M6's design-target estimates for R3/R4/R6 (§4.15) | + GPIO harness, ERM, nPM1300-EK |
 | 5 | **M6** | Nothing runs. Schematic, layout, BOM, enclosure — **inputs are M4's number and M5's estimates, not confirmed measurements** (§4.15) | — |
 | 6 | **M7** | The custom board. A failure is the port or the board | Custom remote PCBs |
 | 7 | **M8** | The custom dongle. Optional, cost-driven, deliberately last | Custom dongle |
@@ -84,26 +84,7 @@
 - [x] **S4 [AGENT] — Fixes from S3; prepare W2/W3.** Nothing from S3 needed fixing — all seven steps passed on the first attempt, so this step is procedure prep only. Walkthrough written into S5 below. ✅ 2026-08-13.
 - [x] **S5 [BENCH] — W2 uplink + W3 downlink.** ✅ 2026-08-13, all seven steps pass — `HISTORY.md` §9.2. **Closes W2 and W3.** One scope call made during the session, not before it: exact `HOLD_REP` cadence and the A6 wrap case were both judged not worth forcing at this rung — see the parked-items row and `HISTORY.md` for why.
 - [x] **S6 [AGENT] — W4/W5 instrumentation and procedures.** ✅ 2026-08-13 — `HISTORY.md` §9.2/§9.3. Exported the app's full rolling ack-latency sample set (`ackLatenciesMs`, `wrsl-app` `DongleService.js`) alongside the existing p99/max, so `exportDiagnostics()` carries a real distribution rather than two summary numbers — 137 wrsl-app tests still green. **Found while preparing this, not while running it**: what that counter measures is the app's own EVT-received-to-ACK-sent turnaround only (25 ms of the 120 ms budget, RP §11) — the two radio legs of the full press-to-tap round trip have no wire timestamp on either end and aren't newly instrumented here. Also found A9 is not implemented (mechanism 2 needs a GATT primitive Zephyr doesn't have) — recorded as a known gap (§8), dropped from W4's pass criteria rather than written into a provocation procedure it can't pass. LE Flushable ACL Data investigated and recorded as a considered-and-deferred decision, §4.14. Walkthrough for A8, A10 and the W5 supervision matrix written into S7 below.
-- [ ] **S7 [BENCH] — W4 round trip + W5 link state; the M2 demonstration.**
-
-  **W4 — the deadline rule (A9 excluded, §8):**
-
-  1. **A8 (late `ACK` never sent).** From DevTools' console on the scoreboard tab, block the JS event loop synchronously for >120 ms timed around a press (e.g. a busy `for` loop run right as a button is pressed) — the same technique V5.7 used to trigger the watchdog. Send `INFO` from the raw command console before and after; confirm `LOG counters late=N ...` incremented by exactly the number of presses caught in the stall, and that no `HAP` fired for those presses. Then press normally again and confirm `late=` stops incrementing — the deadline rule must be provoked *and* shown absent under normal operation, not just provoked once.
-  2. **A10 (`BEAT` never truncates a `TAP`).** Start a secondary clock owned by RED (riding time in NCAA or folkstyle) so `HAP RED BEAT` fires once a second — LED1 shows a faint 1 Hz pulse. Time an `ADD_POINT` press to land as close as possible to a beat's edge; a `TAP` pulse is only 40 ms (`remote/src/haptic.c`), so this needs a few tries. *Expect:* the `TAP` always plays out its full, unmistakably-brighter pulse — never visibly cut short or replaced by a dim one mid-flash.
-  3. **The distribution.** After a few minutes of ordinary pressing (no deliberate stall), export diagnostics and check `counters.ackLatenciesMs` — this is the app's own share of the budget as an actual sample set, not just the p99/max already shown in the panel. A skew or a p99 that's crept up since S5 is worth a second look; a single number never would have shown that.
-
-  **W5 — the four supervision relationships** (`RADIO_PROTOCOL.md` §9.1; the USB-side two are already proven from V1/V5 and are listed for completeness, not re-run):
-
-  4. **Dongle watches remote** *(new)*. With RED connected, move it out of range or power it off. *Expect:* `LINK RED DISCONNECTED` after the 2 s debounce (§9.4), not immediately.
-  5. **Remote watches dongle** *(new — A15/A16)*. Power RED on **before** the dongle, or with it unplugged. *Expect:* `LED_LINK` off and the repeating double buzz from boot — never a false "connected" while waiting for first contact (A16). Then, with RED already connected and rendering `LED_LINK` solid, **close the scoreboard tab or unplug the dongle from the laptop while leaving the DK powered.** *Expect (A15):* the DK's radio connection to the dongle stays up — the dongle keeps sending `LINK RED CONNECTED` if a terminal is watching — but the DK still renders link-lost, because the dongle sent `DN_HOST DOWN` on its own app-supervision expiry. This is the case RP §9's own text calls "most likely to be missed, because everything about the radio looks healthy while it happens" — confirm by watching the DK, not the dongle.
-  6. **A17 (sub-2 s reconnect).** Move RED out of range for roughly 1.5 s, then back. *Expect:* the app shows `CONNECTING` then `CONNECTED` with **no `DISCONNECTED` line at all** in between — the debounce doing its job.
-  7. **A18 (press while out of range).** With RED out of range, press a button, then bring it back. *Expect:* no `EVT` while it's out, and the dongle's `LOG counters gap=N` incremented once RED reconnects — the press wasn't silently lost, it shows up as a real, attributable gap.
-  8. **A7 (reboot re-baselines).** Power-cycle RED while connected. *Expect:* it reconnects and the first press afterward produces a normal `EVT`, with **no gap logged** — a fresh connection re-baselines `CTR` (`UP_READY`'s `ctr_base`) rather than reporting a false gap against the old session's counter.
-  9. **B4 (debounce under repeated power-cycling).** Power-cycle RED three or four times at the range edge in quick succession. *Expect:* the debounce behaves the same every time — no spurious `DISCONNECTED` on a fast reconnect, no missed real disconnect on a slow one.
-
-  **Then, the demonstration that closes M2:** a physical press on the DK, scored on the scoreboard, acknowledged back as a rendered haptic on that DK, and on that DK only. Run it, and record the run in `HISTORY.md` §9.2/§9.3 the same way S3/S5 were.
-
-  *Pass criteria: §5.3 rungs W4 (A9 excluded, §8), W5. Closes M2.*
+- [ ] **S7 [BENCH] — the M2 demonstration.** A physical press on the DK, scored on the scoreboard, acknowledged back as a rendered haptic on that DK, and on that DK only. This is the actual exit criterion for M2 (§9) — not a new discovery, since S5's closing positive control already did this informally ("went further than the rung required," `HISTORY.md` §9.2, 2026-08-13). Run it once more deliberately and record it. *Pass criteria: the demonstration runs, on the record. Closes M2.* **W4/W5's edge-case matrix (A8, A10, A15–A18, A7, B4) is not a precondition for this** — none of it gates M4 or M5, and A10 specifically exercises the LED-proxy `haptic.c` M5 replaces wholesale. Moved to §3, parked, unlocked by the PCB fab wait (§4.16) — full walkthrough preserved as **S20**.
 
 ### 2.2 M4 — the 2:1 link
 
@@ -129,11 +110,21 @@ What M4 exists to establish (each needs the second connection to mean anything):
 
 **One trap on M4 numbers:** a one-connection latency figure is not a two-connection latency figure. Do not carry a W4 number forward past W6.
 
-### 2.3 Later phases — coarse until M4's measurements exist
+### 2.3 M5 — the full-feature remote, on the DK
 
-Planned deliberately at low resolution; detailing them now would re-create the deferral noise this document was restructured to remove. Each gets its own queue steps when its predecessor closes.
+The DK's GPIO carries what its onboard peripherals could not: the three remaining buttons and four RGB indicators, a real ERM and driver IC, and the nPM1300-EK. **This is where R3, R4 and R6 get their design-target estimate for M6** (§4.15) — the most representative rig that can exist before the enclosure does, understood as a number M6 designs against, not a closed measurement. Order follows §4.15's own logic: build what's fully specified first (buttons, indicators), then the two items still needing a real-world component decision (haptic driver, PMIC bring-up), so the open decisions don't block the closed ones.
 
-**M5 — the full-feature remote, on the DK.** The DK's GPIO carries what its onboard peripherals could not: seven buttons in the FS §3.1 layout (debounce 15 ms), four RGB indicators rendering `DN_INDICATOR` in colour, an ERM + driver IC with the full waveform table, `DN_CONFIG` scaling that **preserves the `BEAT`:`TAP` ratio** (`RADIO_PROTOCOL.md` §7.3), nPM1300-EK integration (charge, fuel gauge, regulator, USB-C) retiring the synthetic `battery_pct` — the last fake value in the system — and the remote-local behaviours with no wire representation (FS §10.2). **M5 produces the best available estimate for R3, R4 and R6 — a design target for M6, not a closed measurement** (§4.15): a motor on a strap wired back to the DK is the most representative rig that can exist before the enclosure does, and it's worth building for exactly that reason, but it cannot settle a question the final mechanical coupling (housing, strap material and tension) still has a vote in. Treat its numbers as what M6 designs against, not as proof M6 will be right.
+- [ ] **S13 [AGENT] — GPIO harness driver: the remaining buttons and indicators.** Extend `remote/src/buttons.c` for `REMOVE_POINT`, `BACKWARD` and `F2` (`BACKWARD` repeating like `FORWARD`; the other two non-repeating, matching FS §3.1) and `remote/src/indicators.c` so all four `DN_INDICATOR` positions render real RGB, not the mode-only mono LEDs the DK stage has used since M2. Pick GPIO clear of what's already committed — buttons on P0.11/12/24/25, LEDs on P0.13/14/15/16, plus the DK's UART/J-Link-reserved pins — and record the wiring plan in `remote/BUILD_SPEC.md` §2 for S14 to build against.
+- [ ] **S14 [BENCH] — Breadboard the harness.** Wire seven buttons and four RGB indicators (or modules) to the DK per S13's plan. Confirm each new button's gesture classification (`PRESS`/`HOLD`/`HOLD_REP` as assigned) and that each indicator renders `DN_INDICATOR`'s actual colour — closing the "indicator colour" gap `PLAN.md` §5.6 has listed as unclaimable on the DK since M2.
+- [ ] **S15 [AGENT] — Haptic driver + ERM.** `SCOPE.md`/`SYSTEM_FUNC_SPEC.md` leave the driver IC unspecified — "an ERM plus driver IC" — so this step's first job is a real candidate recommendation (nordic-mcp / datasheet check for something DK-breadboard-friendly), not just code. **Procurement**: the part isn't on the bench yet unless already ordered — flag before writing driver code against a part nobody has. Once chosen, replace `remote/src/haptic.c`'s `pwm_led0` proxy with the real driver, and extend `DN_CONFIG` scaling (`RADIO_PROTOCOL.md` §7.3) to whatever amplitude control the real driver exposes, still preserving the `BEAT`:`TAP` ratio.
+- [ ] **S16 [BENCH] — Wire the ERM, strap it to a wrist.** Confirm the waveform table renders with the right character end to end, and take R3/R4's first real reading — **a design-target estimate for M6, not closure** (§4.15); M7 is where it closes.
+- [ ] **S17 [AGENT] — nPM1300-EK integration.** Charge, fuel gauge, regulator, USB-C — check nordic-mcp for an existing NCS nPM1300 sample before writing this from scratch. Retires `SYNTHETIC_BATTERY_PCT`, the last fake value anywhere in the system, with a real fuel-gauge reading.
+- [ ] **S18 [BENCH] — Wire the nPM1300-EK.** Confirm charging behaviour and a real `battery_pct` on the wire that actually tracks a battery under load. Take R6's first real reading — again a design-target estimate (§4.15), not the ten-hour M7 measurement.
+- [ ] **S19 [BENCH] — The M5 demonstration.** All of it together on one DK — seven buttons, four RGB indicators, real haptic, real battery — modelling the complete remote FS §3.1/§3.2 describes. **This is what M6's component selection and layout get designed against.** *Closes M5.*
+
+### 2.4 Later phases — coarse until their predecessor closes
+
+Planned deliberately at low resolution; detailing them now would re-create the deferral noise this document was restructured to remove. Each gets its own queue steps when its predecessor closes — the same principle that just turned M5 from a paragraph into S13–S19.
 
 **M6 — the custom remote PCB.** No firmware runs. Inputs are M4's connection-interval headroom and M5's ERM/current-draw estimates — best-available numbers, designed against, not measurements the board waits to be confirmed. Nothing about the hardware design is recorded anywhere in this repository yet. Open items at least: module selection (an MDBT50Q variant keeps the RF characterisation), the ERM and driver chosen at M5 or the dual-motor contingency, nPM1300 as the production part, battery chemistry and capacity sized from R6's estimate with headroom (§4.8), the FS §3.1 button mechanics and oversized `TOGGLE_CLOCK` datum, four RGB indicators adjacent to their buttons, USB-C charging, APPROTECT as a manufacturing step, and **a DFU strategy for the remotes, which exists in no document** (§8). **If M7 finds an estimate wrong, that is a second PCB spin** — an accepted cost of this ordering, not evidence the ordering was wrong (§4.15).
 
@@ -152,8 +143,9 @@ Deferred work in one place, each with the condition that re-admits it. **A parke
 | Item | Why parked | Unlock condition | Re-entry |
 |---|---|---|---|
 | **S10–S12** — scripted V6.4/soak tooling, W7 range/density, V6.5 dongle swap, V7 version guard, the V8/W8 overnight soak | None of it gates M5 or M6 (§4.15) — it's confidence-building on a system about to change shape at M6 anyway | The PCB fab wait (after M6 ships) | Re-enters the queue as **S10, S11, S12** unchanged; only their timing moved |
+| **S20** — S7's original W4/W5 edge-case matrix: A8, A10, the ack-latency distribution check, and the four-relationship supervision matrix (A15–A18, A7, B4) | None of it gates M2's actual exit criterion (the demonstration, which already ran informally); A10 tests LED-proxy `haptic.c` code M5 replaces wholesale (§4.16) | The PCB fab wait, alongside S10–S12 | Full walkthrough preserved below, §3.1 |
 | **V4 row 7** — burst suppression observed on the wire | An operator click dispatches the same `INPUT` a press would but produces no wire `EVT`, so there is nothing to suppress against; mechanism is unit-tested (`DongleService.test.js`) | Dongle-originated `EVT`s under app load — real presses or `TEST` modes | S12 soak (PCB fab wait), or any W2+ session |
-| **V5.1, remote-render half** — remotes render link-lost on app timeout | No remote existed; `radio_null` stub | DK remote connected | **S7** (W5/A15) |
+| **V5.1, remote-render half** — remotes render link-lost on app timeout | No remote existed; `radio_null` stub | DK remote connected — met, but the check itself is A15, moved to **S20** | **S20**, PCB fab wait |
 | **V5.3 at 30 s+** — sleep long enough that the OS tears down the USB device | 15 s pass pinned the short-sleep case only | Nothing — cheap bench add-on | Any bench session; fold into S12 (PCB fab wait) |
 | **V6.4** — 10× reconnect, no leaked readers/writers | A stopwatch on a `PING` interval can't catch a one-interval leak; needs scripted observation | Scripting, not hardware | **S10**, PCB fab wait |
 | **V6.5** — mid-match dongle swap | Needs a second flashed dongle | Second dongle flashed (M4) | **S11**, PCB fab wait |
@@ -171,6 +163,27 @@ Deferred work in one place, each with the condition that re-admits it. **A parke
 | **Self-hosted fonts** | Licensed `.woff2` binaries needed; pre-event load caches meanwhile | License purchase | M9 |
 | **Remote DFU strategy** | Absent from every document; consequential (`RADIO_PROTOCOL.md` §10.3) | Decision needed | **Decide at M6, at the latest** |
 | **LE Flushable ACL Data** — usable in v3.4.0? | Experimental; the deadline rule must hold without it | Investigation | **S6**, in passing |
+
+### 3.1 S20, in full — preserved from the original S7
+
+Written during S6, displaced from S7 by §4.16. Nothing here changed; only when it runs did.
+
+**W4 — the deadline rule (A9 excluded, §8):**
+
+1. **A8 (late `ACK` never sent).** From DevTools' console on the scoreboard tab, block the JS event loop synchronously for >120 ms timed around a press (e.g. a busy `for` loop run right as a button is pressed) — the same technique V5.7 used to trigger the watchdog. Send `INFO` from the raw command console before and after; confirm `LOG counters late=N ...` incremented by exactly the number of presses caught in the stall, and that no `HAP` fired for those presses. Then press normally again and confirm `late=` stops incrementing — the deadline rule must be provoked *and* shown absent under normal operation, not just provoked once.
+2. **A10 (`BEAT` never truncates a `TAP`).** Start a secondary clock owned by RED (riding time in NCAA or folkstyle) so `HAP RED BEAT` fires once a second — LED1 shows a faint 1 Hz pulse. Time an `ADD_POINT` press to land as close as possible to a beat's edge; a `TAP` pulse is only 40 ms (`remote/src/haptic.c`), so this needs a few tries. *Expect:* the `TAP` always plays out its full, unmistakably-brighter pulse — never visibly cut short or replaced by a dim one mid-flash. **Re-run against M5's real ERM, not the LED proxy — the code under test will be different by then.**
+3. **The distribution.** After a few minutes of ordinary pressing (no deliberate stall), export diagnostics and check `counters.ackLatenciesMs` — this is the app's own share of the budget as an actual sample set, not just the p99/max already shown in the panel. A skew or a p99 that's crept up is worth a second look; a single number never would have shown that.
+
+**W5 — the four supervision relationships** (`RADIO_PROTOCOL.md` §9.1; the USB-side two are already proven from V1/V5 and are listed for completeness, not re-run):
+
+4. **Dongle watches remote** *(new)*. With RED connected, move it out of range or power it off. *Expect:* `LINK RED DISCONNECTED` after the 2 s debounce (§9.4), not immediately.
+5. **Remote watches dongle** *(new — A15/A16)*. Power RED on **before** the dongle, or with it unplugged. *Expect:* `LED_LINK` off and the repeating double buzz from boot — never a false "connected" while waiting for first contact (A16). Then, with RED already connected and rendering `LED_LINK` solid, **close the scoreboard tab or unplug the dongle from the laptop while leaving the DK powered.** *Expect (A15):* the DK's radio connection to the dongle stays up — the dongle keeps sending `LINK RED CONNECTED` if a terminal is watching — but the DK still renders link-lost, because the dongle sent `DN_HOST DOWN` on its own app-supervision expiry. This is the case RP §9's own text calls "most likely to be missed, because everything about the radio looks healthy while it happens" — confirm by watching the DK, not the dongle.
+6. **A17 (sub-2 s reconnect).** Move RED out of range for roughly 1.5 s, then back. *Expect:* the app shows `CONNECTING` then `CONNECTED` with **no `DISCONNECTED` line at all** in between — the debounce doing its job.
+7. **A18 (press while out of range).** With RED out of range, press a button, then bring it back. *Expect:* no `EVT` while it's out, and the dongle's `LOG counters gap=N` incremented once RED reconnects — the press wasn't silently lost, it shows up as a real, attributable gap.
+8. **A7 (reboot re-baselines).** Power-cycle RED while connected. *Expect:* it reconnects and the first press afterward produces a normal `EVT`, with **no gap logged** — a fresh connection re-baselines `CTR` (`UP_READY`'s `ctr_base`) rather than reporting a false gap against the old session's counter.
+9. **B4 (debounce under repeated power-cycling).** Power-cycle RED three or four times at the range edge in quick succession. *Expect:* the debounce behaves the same every time — no spurious `DISCONNECTED` on a fast reconnect, no missed real disconnect on a slow one.
+
+*Pass criteria: §5.3 rungs W4 (A9 excluded, §8), W5.*
 
 ---
 
@@ -327,6 +340,16 @@ Every prior version of this document treated R3 (ERM haptic range), R4 (`BEAT`/`
 
 **Consequence for the queue:** M4 (§2.2) is trimmed to the minimum that establishes the 2:1 link actually works — S8 and a leaner S9 — with the deeper validation work (scripted reconnect tooling, range/density, dongle-swap and version-guard rungs, the overnight soak) moved to the parked table (§3) rather than sitting between "now" and M5/M6. The PCB fabrication wait after M6 ships is explicitly one of the windows that re-admits them, alongside M9.
 
+### 4.16 Product-level validation moves to the PCB fab wait; build-out is the near-term line
+
+§4.15 settled *what* R3/R4/R6 mean. This settles *when the rest of the ladder runs*, prompted directly: the development bottleneck is PCB fabrication lead time, not bench validation — the scoreboard app, the wire protocol, and the dongle↔DK radio link all already work. The stated intent is: prove the 2:1 link with dummy GREEN firmware, build out the DK into a full-feature remote model (buttons, haptics, nPM1300), design and order the PCB, run whatever validation makes sense **while the boards are in fabrication**, then port and run the full product-level validation once two remotes exist on their intended hardware.
+
+**M2's exit criterion is the demonstration, not the edge-case matrix.** `PLAN.md`'s own definition of done (§9) only ever required "a physical press on the DK, scored on the scoreboard, acknowledged back as a rendered haptic" — S5's closing positive control already produced this informally. The W4/W5 walkthrough S6 wrote (A8, A10, the four-relationship supervision matrix) is real, correctly-designed validation, but it was never actually part of that criterion; it had accreted onto S7 as "since we're at the bench anyway." **Moved to §3 as S20**, unlocked by the PCB fab wait, with one case-by-case note: A10 specifically exercises `haptic.c`'s LED-proxy rendering, which M5 replaces wholesale — running it now would test code with no future, and running it again post-M5 is free once S16 is at the bench regardless.
+
+**M5 is promoted from a coarse paragraph to real queue steps (§2.3, S13–S19)** — not because the old low-resolution treatment was wrong in principle (§2.3's own header still says "detail arrives when the predecessor closes," and M4 closing is exactly what triggered this), but because the user's stated intent makes M5 the immediate next build target, not a distant one.
+
+**What stays near-term regardless:** S8/S9 (does the 2:1 link work at all — a scoring-integrity check, not a nice-to-have) and S13–S19 (M5's build-out) are not deferred by this decision. Only *validation whose absence doesn't block building the next thing* moves to the wait — the same test §4.15 already applied to R3/R4/R6, now applied to the rest of the ladder.
+
 ---
 
 ## 5. Validation reference
@@ -335,7 +358,7 @@ Every prior version of this document treated R3 (ERM haptic range), R4 (`BEAT`/`
 
 The interface "works" in the sense that a happy path completed once. That is a much weaker claim than "reliable", and the gap between them is where this class of system fails: at hour three, on a cable pull, on a backgrounded tab, on someone else's laptop.
 
-**Ladder status at a glance:** V0–V6 green (V4 row 7, V6.4, V6.5 parked — §3); V7, V8 never run (queued S11, S12). W0–W3 green; W4–W8 never run (S7–S12).
+**Ladder status at a glance:** V0–V6 green (V4 row 7, V6.4, V6.5 parked — §3); V7, V8 never run (queued S11, S12, PCB fab wait). W0–W3 green; W4/W5 written and parked (S20, PCB fab wait); W6 basic case queued (S9); W7–W8 never run (S11–S12, PCB fab wait).
 
 ### 5.1 Test rig
 
@@ -470,8 +493,8 @@ The counterpart to the V-ladder, for `RADIO_PROTOCOL.md`. The `A`-references are
 | **W1** ✅ | done 2026-08-13 | **Association and security.** One connection, encrypted from the provisioned key, no pairing procedure performed | `RR_IDENTITY` read and validated, CCCD subscribed, `LINK … CONNECTED` with a real RSSI — positive case 2026-08-13. All four negative cases run 2026-08-13, each matching its predicted wire signature exactly: A12 (wrong key) — no `ERR`, connection never completes, only repeated `LINK … CONNECTING`; A13 (set mismatch) — `ERR SET_MISMATCH` + `LOG … set_serial mismatch`; A14 (proto major) — `ERR REMOTE_PROTO_MISMATCH` + `LOG … proto major mismatch`; A19 (unprovisioned remote) — nothing on the wire at all, all four DK LEDs blinking. Positive control reconfirmed afterward, including live button presses reaching the scoreboard. `HISTORY.md` §9.2 |
 | **W2** ✅ | done 2026-08-13 | **Uplink.** Button → `UP_INPUT` → `EVT` → scoreboard | All three gestures on the four DK buttons (§5.6) confirmed on the wire, `HOLD` firing on threshold-cross not release, non-repetition proven on `TOGGLE_CLOCK`, `HOLD_REP` firing repeatedly on `FORWARD` and stopping on release. **Exact cadence and A6 (wrap) not forced this session** — §3, parked |
 | **W3** ✅ | done 2026-08-13 | **Downlink.** `STATE` → `DN_INDICATOR`, `HAP` → waveform, `CFG` → scaling | Indicators assert and clear correctly; **`ACK … SILENT` puts nothing on the air** (A20), confirmed by reading the wire log, not by watching an LED that was never going to light; `HAP RED` reached a fitted lamp for the first time, `TAP`/`BEAT` distinctly separated; `CFG` scaling visibly reduces amplitude |
-| **W4** | S7 | **Round trip and the deadline rule** | The app's own EVT→ACK turnaround measured as a distribution (not the full radio-inclusive round trip — neither leg has a wire timestamp, `HISTORY.md` §9.2). A8 a late `ACK` is not sent at all, `taps_dropped_late` non-zero when provoked and zero when not. A10 a `BEAT` never truncates a `TAP`. **A9 excluded — mechanism 2 is not implemented, §8** |
-| **W5** | S7 | **Link state, in all four supervision relationships** (`RADIO_PROTOCOL.md` §9.1) | **A15 is the rung** — app supervision expires, radio stays up, both remotes render link-lost. Also A16 boot-is-DOWN, A17 sub-2 s reconnect emits no `DISCONNECTED`, A18 press out of range, A7 reboot re-baselines with no false gap, and §9.4 debounce under repeated power-cycling at the range edge (B4) |
+| **W4** | S20, PCB fab wait | **Round trip and the deadline rule** — not required to close M2 (§4.16) | The app's own EVT→ACK turnaround measured as a distribution (not the full radio-inclusive round trip — neither leg has a wire timestamp, `HISTORY.md` §9.2). A8 a late `ACK` is not sent at all, `taps_dropped_late` non-zero when provoked and zero when not. A10 a `BEAT` never truncates a `TAP` — re-run against M5's real ERM, not the LED proxy. **A9 excluded — mechanism 2 is not implemented, §8** |
+| **W5** | S20, PCB fab wait | **Link state, in all four supervision relationships** (`RADIO_PROTOCOL.md` §9.1) — not required to close M2 (§4.16) | **A15 is the rung** — app supervision expires, radio stays up, both remotes render link-lost. Also A16 boot-is-DOWN, A17 sub-2 s reconnect emits no `DISCONNECTED`, A18 press out of range, A7 reboot re-baselines with no false gap, and §9.4 debounce under repeated power-cycling at the range edge (B4) |
 | **W6** | S9 | **Two connections.** The rung M4 exists for | 7.5 ms clean on the pair — no dropped events, no event-length overruns — with the interval reported in the setup `LOG` line so every latency figure is attributable. **B6: taps land on the originating remote only.** R5: cross-connection arrival skew measured. Beat on the owner only, from real hardware. B2 with the transmit-ring drop counter already instrumented |
 | **W7** | S11 | **Range, link budget and density**, at the dongle **as deployed** | 12 m with body shadowing, dongle in a laptop port below table height — not a bench with line of sight. p99, not median. **Take this rung with the MDBT50Q-CX-40 as remote #2** (§4.9). Escalation order if it does not close is fixed: USB extension cable, then a placement constraint in the documentation, then transmit power |
 | **W8** | S12, re-run M7 | **Radio soak, and the §5.4 regression list in full** | ≥4 h with both remotes connected and pressing. `radio_gap` and `radio_dup` accounted for rather than merely observed; no transmit-ring drops beyond `BEAT`; B1 workqueue contention re-measured with the radio live; V4 and V5 re-run underneath it |
@@ -622,10 +645,11 @@ Gaps that are already scheduled point at their queue step or parked row rather t
 - [ ] Both host suites part of the routine build rather than a remembered step — **still remembered** (§3)
 - [x] W1 pass *including* its negative cases — positive case green 2026-08-13, all four negative cases green 2026-08-13
 - [x] W2 and W3 pass, including A20 — 2026-08-13
-- [ ] W4–W5 pass on one connection, with A15 (A9 excluded, §8) — **S7**
-- [ ] **The demonstration:** press on the DK → score on the scoreboard → tap rendered on that DK, and on that DK only — **S7**
+- [ ] **The demonstration:** press on the DK → score on the scoreboard → tap rendered on that DK, and on that DK only — **S7**. M2's actual exit criterion (§4.16)
+- [ ] W4–W5 pass, with A15 (A9 excluded, §8) — **S20, PCB fab wait** — not required for M2 (§4.16)
 - [ ] W6 (basic case) pass on two connections — **S9**; W7 (range/density, full latency-figure recording) — **S11, PCB fab wait**
-- [ ] V8 clean for ≥4 h with zero sequence gaps and zero applied duplicates; W8 clean with both remotes connected, `radio_gap`/`radio_dup` accounted for — **S12**
+- [ ] The DK models a complete remote — seven buttons, four RGB indicators, real ERM, real battery — **S19**. Closes M5
+- [ ] V8 clean for ≥4 h with zero sequence gaps and zero applied duplicates; W8 clean with both remotes connected, `radio_gap`/`radio_dup` accounted for — **S12, PCB fab wait**
 - [ ] R1, R2, R5 measured, with mitigations applied where they fail — before M6 opens (§2)
 - [ ] R3, R4, R6 given a design-target estimate at M5 for M6 to build against — **not** a gate; closed for real at M7 (§4.15)
 - [ ] D1–D8 pass; real VID/PID assigned and `requestPort()` filtered — M9
