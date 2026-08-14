@@ -1,0 +1,37 @@
+menu "Dummy remote options"
+
+config PROVISIONING_HEADER_DIR
+	string "Directory containing this unit's generated provisioning_data.h"
+	help
+	  Same option, same reasoning, as remote/Kconfig and dongle/Kconfig:
+	  identity is baked into the image at build time by
+	  dongle/tools/provision.py — PLAN.md §4.13. No default.
+	  CMakeLists.txt FATAL_ERRORs at configure time if this is empty or
+	  the file isn't there.
+
+config REMOTE_TEST_RADIO_PROTO_MAJOR
+	int "RR_IDENTITY radio_proto_major to report (bench test only)"
+	default 1
+	help
+	  link.c (reused unchanged from remote/src/) references this symbol
+	  directly — remote/Kconfig's own option, duplicated here rather than
+	  shared, since Kconfig has no cross-application include mechanism.
+	  Same default, same reasoning: A14 has no provisioning-record
+	  representation, so this is the one deliberate build-time override,
+	  defaulting to the real value.
+
+config REMOTE_DUMMY_STIM_INTERVAL_MS
+	int "Self-stimulus press interval (ms)"
+	default 3000
+	help
+	  PLAN.md §4.9: this board's job is to hold a connection, consume the
+	  downlink, and generate uplink traffic at realistic rates — it does
+	  not need a human pressing it. A synthetic press fires on this
+	  interval through the identical gesture-classification path a real
+	  GPIO edge would use, the same trick dongle/src/engine.c's TEST 2
+	  plays for USB-side load. 3 s approximates a plausible referee
+	  press cadence; lower it for W6/W7's density and load questions.
+
+endmenu
+
+source "Kconfig.zephyr"

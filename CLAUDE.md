@@ -76,6 +76,9 @@ west build -b raytac_mdbt50q_cx_40_dongle/nrf52840 dongle -d dongle/build-noradi
 
 # From stage 4, the DK remote:
 west build -b nrf52840dk/nrf52840 remote -d remote/build
+
+# From M4 (PLAN.md §2.2), the PCA10059 dummy second remote:
+west build -b nrf52840dongle/nrf52840 remote_dummy -d remote_dummy/build
 ```
 
 `-DCONFIG_DONGLE_RADIO=y` deliberately refuses to configure until `src/radio_ble.c` exists at stage 3.
