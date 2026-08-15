@@ -125,9 +125,9 @@ struct rframe_msg {
 
 		struct {
 			enum proto_ind_mode f1_mode;
-			uint8_t f1_rgb[3];
+			enum proto_ind_colour f1_colour;
 			enum proto_ind_mode f2_mode;
-			uint8_t f2_rgb[3];
+			enum proto_ind_colour f2_colour;
 		} dn_indicator;
 
 		struct {
@@ -169,8 +169,8 @@ int rframe_enc_up_diag(uint8_t *out, size_t cap, uint8_t ctr,
 int rframe_enc_dn_haptic(uint8_t *out, size_t cap, uint8_t ctr,
 			 enum proto_waveform w, uint8_t ttl_4ms);
 int rframe_enc_dn_indicator(uint8_t *out, size_t cap, uint8_t ctr,
-			    enum proto_ind_mode f1_mode, const uint8_t f1_rgb[3],
-			    enum proto_ind_mode f2_mode, const uint8_t f2_rgb[3]);
+			    enum proto_ind_mode f1_mode, enum proto_ind_colour f1_colour,
+			    enum proto_ind_mode f2_mode, enum proto_ind_colour f2_colour);
 int rframe_enc_dn_config(uint8_t *out, size_t cap, uint8_t ctr,
 			 uint8_t haptic_scale, uint8_t led_brightness);
 int rframe_enc_dn_host(uint8_t *out, size_t cap, uint8_t ctr, bool up);

@@ -103,28 +103,30 @@ enum rframe_decode_status rframe_decode(const uint8_t *buf, size_t len,
 	}
 
 	case RFRAME_DN_INDICATOR: {
-		uint8_t m1, m2;
+		uint8_t m1, m2, c1, c2;
 
-		if (len != 10) {
+		if (len != 6) {
 			return RFRAME_ERR_LENGTH;
 		}
 		m1 = buf[2];
-		m2 = buf[6];
-		/* PROTO_IND_OFF/SOLID are 0/1 on the wire with no offset (RP
-		 * §5.5), unlike button/gesture/waveform. */
+		c1 = buf[3];
+		m2 = buf[4];
+		c2 = buf[5];
+		/* PROTO_IND_OFF/SOLID and PROTO_COLOUR_* are 0-based on the
+		 * wire with no offset (RP §5.5), unlike button/gesture/
+		 * waveform. */
 		if (m1 > PROTO_IND_SOLID || m2 > PROTO_IND_SOLID) {
+			return RFRAME_ERR_FIELD;
+		}
+		if (c1 >= PROTO_COLOUR_COUNT || c2 >= PROTO_COLOUR_COUNT) {
 			return RFRAME_ERR_FIELD;
 		}
 		out->type = RFRAME_DN_INDICATOR;
 		out->ctr = buf[1];
 		out->dn_indicator.f1_mode = (enum proto_ind_mode)m1;
-		out->dn_indicator.f1_rgb[0] = buf[3];
-		out->dn_indicator.f1_rgb[1] = buf[4];
-		out->dn_indicator.f1_rgb[2] = buf[5];
+		out->dn_indicator.f1_colour = (enum proto_ind_colour)c1;
 		out->dn_indicator.f2_mode = (enum proto_ind_mode)m2;
-		out->dn_indicator.f2_rgb[0] = buf[7];
-		out->dn_indicator.f2_rgb[1] = buf[8];
-		out->dn_indicator.f2_rgb[2] = buf[9];
+		out->dn_indicator.f2_colour = (enum proto_ind_colour)c2;
 		return RFRAME_OK;
 	}
 
@@ -252,23 +254,19 @@ int rframe_enc_dn_haptic(uint8_t *out, size_t cap, uint8_t ctr,
 }
 
 int rframe_enc_dn_indicator(uint8_t *out, size_t cap, uint8_t ctr,
-			    enum proto_ind_mode f1_mode, const uint8_t f1_rgb[3],
-			    enum proto_ind_mode f2_mode, const uint8_t f2_rgb[3])
+			    enum proto_ind_mode f1_mode, enum proto_ind_colour f1_colour,
+			    enum proto_ind_mode f2_mode, enum proto_ind_colour f2_colour)
 {
-	if (cap < 10) {
+	if (cap < 6) {
 		return -1;
 	}
 	out[0] = RFRAME_DN_INDICATOR;
 	out[1] = ctr;
 	out[2] = (uint8_t)f1_mode;
-	out[3] = f1_rgb[0];
-	out[4] = f1_rgb[1];
-	out[5] = f1_rgb[2];
-	out[6] = (uint8_t)f2_mode;
-	out[7] = f2_rgb[0];
-	out[8] = f2_rgb[1];
-	out[9] = f2_rgb[2];
-	return 10;
+	out[3] = (uint8_t)f1_colour;
+	out[4] = (uint8_t)f2_mode;
+	out[5] = (uint8_t)f2_colour;
+	return 6;
 }
 
 int rframe_enc_dn_config(uint8_t *out, size_t cap, uint8_t ctr,

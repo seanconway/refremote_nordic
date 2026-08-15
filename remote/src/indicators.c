@@ -1,9 +1,9 @@
 #include "indicators.h"
 #include "haptic.h"
+#include "ind_colour.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/pwm.h>
-#include <string.h>
 
 /* §7.1/FS §10: each indicator is three PWM channels, R/G/B, wired common-
  * anode (bench-confirmed by diode test) — anode to VDD, GPIO sinks each
@@ -30,13 +30,6 @@ static const struct rgb_channels pwr_ch = {
 	PWM_DT_SPEC_GET(DT_ALIAS(pwrr)), PWM_DT_SPEC_GET(DT_ALIAS(pwrg)), PWM_DT_SPEC_GET(DT_ALIAS(pwrb)),
 };
 
-/* Shared by LED_LINK (§10.2) and LED_PWR (§10.1) — both are now 3-state
- * red/yellow/green ladders over the same three colours, not independent
- * palettes. */
-static const uint8_t COLOR_RED[3]    = { 255, 0, 0 };
-static const uint8_t COLOR_YELLOW[3] = { 255, 200, 0 };
-static const uint8_t COLOR_GREEN[3]  = { 0, 255, 0 };
-
 /* Mid-green until DN_SIMSOC says otherwise — "default to the green range,"
  * not 0, which would misrender as a real low-battery state before any test
  * value has ever been set. */
@@ -46,7 +39,7 @@ static uint8_t led_brightness = 100; /* DN_CONFIG default until told otherwise, 
 static uint8_t battery_pct = BATTERY_PCT_DEFAULT;
 
 static enum proto_ind_mode f1_mode, f2_mode;
-static uint8_t f1_rgb[3], f2_rgb[3];
+static enum proto_ind_colour f1_colour, f2_colour;
 static bool radio_up, host_up;
 
 /* §7.2: "link-lost also drives a repeating double buzz... a remote-local
@@ -67,15 +60,18 @@ static uint32_t chan_pulse_ns(const struct pwm_dt_spec *ch, uint8_t level)
 	return (uint32_t)(((uint64_t)ch->period * duty_of_255) / 255u);
 }
 
-static void render(const struct rgb_channels *ch, enum proto_ind_mode mode, const uint8_t rgb[3])
+static void render(const struct rgb_channels *ch, enum proto_ind_mode mode,
+		    enum proto_ind_colour colour)
 {
-	uint8_t r = mode == PROTO_IND_SOLID ? rgb[0] : 0;
-	uint8_t g = mode == PROTO_IND_SOLID ? rgb[1] : 0;
-	uint8_t b = mode == PROTO_IND_SOLID ? rgb[2] : 0;
+	uint8_t rgb[3] = { 0, 0, 0 };
 
-	(void)pwm_set_pulse_dt(&ch->r, chan_pulse_ns(&ch->r, r));
-	(void)pwm_set_pulse_dt(&ch->g, chan_pulse_ns(&ch->g, g));
-	(void)pwm_set_pulse_dt(&ch->b, chan_pulse_ns(&ch->b, b));
+	if (mode == PROTO_IND_SOLID) {
+		ind_colour_rgb(colour, rgb);
+	}
+
+	(void)pwm_set_pulse_dt(&ch->r, chan_pulse_ns(&ch->r, rgb[0]));
+	(void)pwm_set_pulse_dt(&ch->g, chan_pulse_ns(&ch->g, rgb[1]));
+	(void)pwm_set_pulse_dt(&ch->b, chan_pulse_ns(&ch->b, rgb[2]));
 }
 
 /* FS §10.2: red (radio down) / yellow (radio up, host down) / green (both
@@ -83,9 +79,11 @@ static void render(const struct rgb_channels *ch, enum proto_ind_mode mode, cons
 static void update_link(void)
 {
 	bool up = radio_up && host_up;
-	const uint8_t *color = !radio_up ? COLOR_RED : host_up ? COLOR_GREEN : COLOR_YELLOW;
+	enum proto_ind_colour colour = !radio_up ? PROTO_COLOUR_RED
+				      : host_up  ? PROTO_COLOUR_GREEN
+						 : PROTO_COLOUR_YELLOW;
 
-	render(&link_ch, PROTO_IND_SOLID, color);
+	render(&link_ch, PROTO_IND_SOLID, colour);
 
 	if (up) {
 		(void)k_work_cancel_delayable(&lost_link_work);
@@ -103,11 +101,11 @@ static void update_link(void)
  * battery reading always has some value. */
 static void update_battery(void)
 {
-	const uint8_t *color = battery_pct < 33u ? COLOR_RED
-			      : battery_pct < 66u ? COLOR_YELLOW
-			      : COLOR_GREEN;
+	enum proto_ind_colour colour = battery_pct < 33u ? PROTO_COLOUR_RED
+				      : battery_pct < 66u ? PROTO_COLOUR_YELLOW
+							  : PROTO_COLOUR_GREEN;
 
-	render(&pwr_ch, PROTO_IND_SOLID, color);
+	render(&pwr_ch, PROTO_IND_SOLID, colour);
 }
 
 static void lost_link_handler(struct k_work *work)
@@ -121,16 +119,16 @@ static void lost_link_handler(struct k_work *work)
 	}
 }
 
-void indicators_set(enum proto_ind_mode new_f1_mode, const uint8_t new_f1_rgb[3],
-		    enum proto_ind_mode new_f2_mode, const uint8_t new_f2_rgb[3])
+void indicators_set(enum proto_ind_mode new_f1_mode, enum proto_ind_colour new_f1_colour,
+		    enum proto_ind_mode new_f2_mode, enum proto_ind_colour new_f2_colour)
 {
 	f1_mode = new_f1_mode;
 	f2_mode = new_f2_mode;
-	memcpy(f1_rgb, new_f1_rgb, sizeof(f1_rgb));
-	memcpy(f2_rgb, new_f2_rgb, sizeof(f2_rgb));
+	f1_colour = new_f1_colour;
+	f2_colour = new_f2_colour;
 
-	render(&f1_ch, f1_mode, f1_rgb);
-	render(&f2_ch, f2_mode, f2_rgb);
+	render(&f1_ch, f1_mode, f1_colour);
+	render(&f2_ch, f2_mode, f2_colour);
 }
 
 void indicators_set_brightness(uint8_t brightness)
@@ -139,8 +137,8 @@ void indicators_set_brightness(uint8_t brightness)
 
 	/* Brightness applies to whatever is already showing, so every
 	 * rendered indicator needs a re-render at the new level. */
-	render(&f1_ch, f1_mode, f1_rgb);
-	render(&f2_ch, f2_mode, f2_rgb);
+	render(&f1_ch, f1_mode, f1_colour);
+	render(&f2_ch, f2_mode, f2_colour);
 	update_link();
 	update_battery();
 }

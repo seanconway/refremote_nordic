@@ -288,48 +288,44 @@ static void t11_seq_range(void)
 
 static void t12_state_parsed(void)
 {
-	struct proto_msg m, lower;
+	struct proto_msg m, second;
 
-	PARSE(m, "STATE RED SOLID 00A0FF OFF 000000");
+	PARSE(m, "STATE RED SOLID RED OFF BLUE");
 	CHECK(m.type == PROTO_STATE, "expected STATE, got %d", m.type);
 	if (m.type == PROTO_STATE) {
 		CHECK(m.state.remote == PROTO_REMOTE_RED, "remote");
 		CHECK(m.state.f1_mode == PROTO_IND_SOLID, "f1 mode");
-		CHECK(m.state.f1_rgb[0] == 0x00 && m.state.f1_rgb[1] == 0xA0 &&
-		      m.state.f1_rgb[2] == 0xFF, "f1 rgb %02X%02X%02X",
-		      m.state.f1_rgb[0], m.state.f1_rgb[1], m.state.f1_rgb[2]);
+		CHECK(m.state.f1_colour == PROTO_COLOUR_RED, "f1 colour %d", m.state.f1_colour);
 		CHECK(m.state.f2_mode == PROTO_IND_OFF, "f2 mode");
+		CHECK(m.state.f2_colour == PROTO_COLOUR_BLUE, "f2 colour %d", m.state.f2_colour);
 	}
 
-	/* Case-insensitive on receive; the app emits upper case. */
-	PARSE(lower, "STATE GREEN OFF 000000 SOLID c2f000");
-	CHECK(lower.type == PROTO_STATE &&
-	      lower.state.f2_rgb[0] == 0xC2 && lower.state.f2_rgb[1] == 0xF0 &&
-	      lower.state.f2_rgb[2] == 0x00, "lower-case hex must parse");
+	PARSE(second, "STATE GREEN OFF YELLOW SOLID GREEN");
+	CHECK(second.type == PROTO_STATE &&
+	      second.state.f2_colour == PROTO_COLOUR_GREEN, "second STATE line");
 }
 
 /*
- * Five hex characters must invalidate the whole line. The failure mode of a
- * digit-accumulating parser is to accept 00A0F as 0x00A0F and render a colour
- * that is wrong but plausible, so the length is checked before the digits.
+ * Colour is a name from the fixed palette, not hex — case-sensitive like
+ * every other token in the wire protocol (lookup_name() uses strcmp()), and
+ * an unrecognised name must invalidate the whole line rather than being
+ * guessed at.
  */
-static void t13_state_hex_strict(void)
+static void t13_state_colour_strict(void)
 {
-	struct proto_msg m5, m7, mx, mode, argc;
+	struct proto_msg lower, unknown, mode, argc;
 
-	PARSE(m5, "STATE RED SOLID 00A0F OFF 000000");
-	CHECK(m5.type == PROTO_INVALID, "5-char hex must be INVALID, got %d", m5.type);
+	PARSE(lower, "STATE RED SOLID red OFF 000000");
+	CHECK(lower.type == PROTO_INVALID, "lower-case colour must be INVALID, got %d", lower.type);
 
-	PARSE(m7, "STATE RED SOLID 00A0FFF OFF 000000");
-	CHECK(m7.type == PROTO_INVALID, "7-char hex must be INVALID, got %d", m7.type);
+	PARSE(unknown, "STATE RED SOLID ORANGE OFF BLUE");
+	CHECK(unknown.type == PROTO_INVALID, "a colour outside the palette must be INVALID, got %d",
+	      unknown.type);
 
-	PARSE(mx, "STATE RED SOLID 00A0FG OFF 000000");
-	CHECK(mx.type == PROTO_INVALID, "non-hex digit must be INVALID, got %d", mx.type);
-
-	PARSE(mode, "STATE RED BLINK 00A0FF OFF 000000");
+	PARSE(mode, "STATE RED BLINK RED OFF BLUE");
 	CHECK(mode.type == PROTO_INVALID, "BLINK is not a mode in v3.0");
 
-	PARSE(argc, "STATE RED SOLID 00A0FF OFF");
+	PARSE(argc, "STATE RED SOLID RED OFF");
 	CHECK(argc.type == PROTO_INVALID, "STATE needs exactly 5 arguments");
 }
 
@@ -552,7 +548,7 @@ static void encoders_roundtrip(void)
 	int n;
 
 	n = proto_enc_hello(buf, sizeof(buf), "0.2.0", "RR-0147", 0u);
-	CHECK(n > 0 && strcmp(buf, "HELLO 3.0 0.2.0 RR-0147 0") == 0,
+	CHECK(n > 0 && strcmp(buf, "HELLO 4.0 0.2.0 RR-0147 0") == 0,
 	      "HELLO: \"%s\"", buf);
 	proto_parse(buf, &m);
 	CHECK(m.type == PROTO_HELLO, "HELLO must round-trip");
@@ -663,7 +659,7 @@ int main(void)
 		{ "T10 empty lines ignored",     t10_empty_lines_ignored },
 		{ "T11 seq range 0-65535",       t11_seq_range },
 		{ "T12 STATE parsed",            t12_state_parsed },
-		{ "T13 STATE hex is strict",     t13_state_hex_strict },
+		{ "T13 STATE colour is strict",  t13_state_colour_strict },
 		{ "T14 LINK requires rssi",      t14_link_requires_rssi },
 		{ "T15 unknown waveform",        t15_unknown_waveform },
 		{ "T16 parser is stateless",     t16_parser_is_stateless },

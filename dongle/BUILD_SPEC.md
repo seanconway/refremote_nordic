@@ -2,7 +2,7 @@
 
 **What this document is.** The implementable contract for the dongle firmware: module boundaries, state, algorithms, and acceptance. It is written so that the firmware can be built from it without re-deriving decisions from the protocol documents.
 
-**What it is not.** It does not restate the protocols — `PROTOCOL.md` v3.0 is the wire contract and `RADIO_PROTOCOL.md` v1.0 is the radio contract, and where this document and those disagree, **they win**. It also does not cover build, flash or manual-test procedure; that is [`README.md`](README.md).
+**What it is not.** It does not restate the protocols — `PROTOCOL.md` v4.0 is the wire contract and `RADIO_PROTOCOL.md` v2.0 is the radio contract, and where this document and those disagree, **they win**. It also does not cover build, flash or manual-test procedure; that is [`README.md`](README.md).
 
 | For | See |
 |---|---|
@@ -16,7 +16,7 @@
 
 ## 1. Scope
 
-One firmware, bridging two protocols: WP v3.0 over USB CDC-ACM to the scoreboard, and RP v1.0 over Bluetooth LE to two remotes. It holds **no match state** — not the clock, not the score, not secondary-clock ownership. Everything it holds is transport state.
+One firmware, bridging two protocols: WP v4.0 over USB CDC-ACM to the scoreboard, and RP v2.0 over Bluetooth LE to two remotes. It holds **no match state** — not the clock, not the score, not secondary-clock ownership. Everything it holds is transport state.
 
 The firmware is currently at WP v2.0. That revision is a breaking change and the work is not incremental: the message set changes, the dongle-side clock and heartbeat are deleted outright, and the radio layer does not exist at all.
 
@@ -32,8 +32,8 @@ That configuration is what makes a radio regression attributable. `PLAN.md` §5.
 
 | File | Owns | Zephyr-free |
 |---|---|---|
-| `src/protocol.c/.h` | WP v3.0 line assembler, parser, encoders | **Yes — enforced** |
-| `../common/rframe.c/.h` | RP v1.0 frame codec, both directions, `CTR` arithmetic | **Yes — enforced** |
+| `src/protocol.c/.h` | WP v4.0 line assembler, parser, encoders | **Yes — enforced** |
+| `../common/rframe.c/.h` | RP v2.0 frame codec, both directions, `CTR` arithmetic | **Yes — enforced** |
 | `../common/provisioning.c/.h` | Record layout, `provisioning_validate()` | **Yes — enforced** |
 | `src/engine.c/.h` | All protocol state; the sole producer on the transmit path |  No |
 | `src/radio.h` | The seam. No implementation | — |
@@ -67,9 +67,9 @@ Both host suites live outside the Zephyr build: `tests/protocol/` and `../tests/
 
 struct indicator_state {
     uint8_t f1_mode;              /* 0 OFF, 1 SOLID */
-    uint8_t f1_rgb[3];
+    uint8_t f1_colour;            /* 0 RED, 1 GREEN, 2 BLUE, 3 YELLOW */
     uint8_t f2_mode;
-    uint8_t f2_rgb[3];
+    uint8_t f2_colour;
 };
 
 struct radio_cb {
@@ -226,14 +226,14 @@ Idle bench work now has only `TEST 3` to keep quiet, which raises the stakes on 
 ### 5.5 `STATE` — relay, never cache
 
 ```
-STATE <remote> <f1> <f1rgb> <f2> <f2rgb>
+STATE <remote> <f1> <f1colour> <f2> <f2colour>
 ```
 
 Parsed, converted to `struct indicator_state`, passed to `radio_send_indicator()`. **Unconditionally, without comparing against anything previously sent, and the dongle holds no indicator cache** (RP §7.1).
 
-The temptation is obvious — a cache would suppress redundant frames, and the app already suppresses unchanged `STATE` lines at its end. Refuse it. A cache is dongle-held state that can diverge from the scoreboard's, which is the FS §6.2 failure mode by name, and it diverges silently. Re-sending an unchanged 10-byte frame costs one frame; holding a cache costs a class of bug.
+The temptation is obvious — a cache would suppress redundant frames, and the app already suppresses unchanged `STATE` lines at its end. Refuse it. A cache is dongle-held state that can diverge from the scoreboard's, which is the FS §6.2 failure mode by name, and it diverges silently. Re-sending an unchanged 6-byte frame costs one frame; holding a cache costs a class of bug.
 
-`<f1rgb>` requires a **strict six-character hex** validator, case-insensitive on receive. Five characters must invalidate the whole line (T13). `protocol.c` has `parse_uint` and `parse_int` and no hex parser; write one that checks length first.
+`<f1colour>`/`<f2colour>` are one of `RED`/`GREEN`/`BLUE`/`YELLOW` — looked up with the same `lookup_name()` every other enum token in this parser uses (`ind_mode_names`, `target_names`, …), case-sensitive like the rest of them. There is no hex parser in `protocol.c` any more; v3.0's had one (`parse_rgb6`/`hex_nibble`), specifically to validate a six-character `RRGGBB` triple, and it is gone along with the field it validated.
 
 ### 5.6 `CFG` and `HAP` — the `BOTH` target
 
@@ -347,7 +347,7 @@ initiate to peer_addr[i] only, filtered on the literal address
   → install set_key as LTK via bt_nrf_conn_set_ltk()
   → raise security; no GATT operation before encryption completes
   → read RR_IDENTITY
-  → validate radio_proto_major == 1 and set_serial matches ours
+  → validate radio_proto_major == 2 and set_serial matches ours
   → write the RR_UPLINK CCCD
   → only now report LINK … CONNECTED
   → send the current DN_HOST value
@@ -362,7 +362,7 @@ Negative outcomes, all of which must be exercised and none of which may be a sil
 |---|---|
 | A12 — valid address, no set key | Encryption fails; disconnect; count. No GATT access at any point |
 | A13 — `set_serial` mismatch | Disconnect; `ERR SET_MISMATCH` |
-| A14 — `radio_proto_major` ≠ 1 | Disconnect; `ERR REMOTE_PROTO_MISMATCH`; report that remote `DISCONNECTED` |
+| A14 — `radio_proto_major` ≠ 2 | Disconnect; `ERR REMOTE_PROTO_MISMATCH`; report that remote `DISCONNECTED` |
 | A19 — unprovisioned dongle | Do not initiate at all; `ERR NO_PROVISIONING` |
 
 ### 7.2 Connection parameters
@@ -376,7 +376,7 @@ Negative outcomes, all of which must be exercised and none of which may be a sil
 | Peripheral latency | Skips connection events, delaying the acknowledgement tap by up to *N* intervals |
 | Connection subrating | Same mechanism, same objection. Not needed at all now that SCI is deferred |
 | Data Length Extension | Raises the minimum interval the controller will grant; buys throughput nothing here needs |
-| ATT MTU above the default 23 | Same. The largest frame in RP §5 is 10 bytes |
+| ATT MTU above the default 23 | Same. The largest fixed-length frame in RP §5 is 6 bytes |
 | Indications on the uplink | An ATT confirmation per notification serialises the uplink and adds a round trip inside the 25 ms allocation |
 | Write-with-response on the downlink | *Reliable* delivery is precisely what turns a missed tap into a late one |
 | SCI / LLPM | RP §12.2 — deferred contingency, not implemented |

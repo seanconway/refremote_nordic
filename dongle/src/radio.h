@@ -37,9 +37,9 @@ struct k_work_q;
  * LED_LINK are remote-local and deliberately unreachable from here. */
 struct indicator_state {
 	uint8_t f1_mode;        /* enum proto_ind_mode */
-	uint8_t f1_rgb[3];
+	uint8_t f1_colour;      /* enum proto_ind_colour */
 	uint8_t f2_mode;
-	uint8_t f2_rgb[3];
+	uint8_t f2_colour;
 };
 
 /*

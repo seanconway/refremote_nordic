@@ -1,6 +1,6 @@
 # RefRemote — Dongle ↔ Remote Radio Protocol
 
-**Version:** 1.0 — amended 2026-08-10 in §12.2 and §12.3, which is deliberately not a version bump (§16.1)
+**Version:** 2.0 — amended 2026-08-10 in §12.2 and §12.3, which is deliberately not a version bump (§16.1)
 **Link:** Bluetooth LE, nRF52840 dongle (central) ↔ two nRF52840 wrist remotes (peripherals), at a **7.5 ms connection interval, baseline BLE, no SCI** (§12.2)
 **Scope:** the radio link between the dongle and the remote pair only. The wired link between the dongle and the scoreboard application is a separate protocol, specified in `PROTOCOL.md`; §13 states only what this link assumes of it.
 
@@ -62,7 +62,7 @@ Readability is not lost, it moves. Every frame the dongle relays becomes an ASCI
    │ peripheral   │  conn 0    │   central    │  conn 1    │  peripheral  │
    │ GATT server  │            │ GATT client  │            │ GATT server  │
    └──────────────┘            └──────┬───────┘            └──────────────┘
-                                      │ USB CDC-ACM, PROTOCOL.md v3.0
+                                      │ USB CDC-ACM, PROTOCOL.md v4.0
                                  ┌────▼─────┐
                                  │Scoreboard│
                                  └──────────┘
@@ -106,7 +106,7 @@ Read once by the dongle immediately after encryption, before subscribing to `RR_
 
 | Offset | Size | Field | Notes |
 |---|---|---|---|
-| 0 | 1 | `radio_proto_major` | `1` in this revision |
+| 0 | 1 | `radio_proto_major` | `2` in this revision |
 | 1 | 1 | `radio_proto_minor` | `0` |
 | 2 | 1 | `role` | `0x01` RED, `0x02` GREEN |
 | 3 | 1 | `fw_major` | |
@@ -209,7 +209,7 @@ A firmware change that raises the MTU will not fail a test. It will lengthen the
 | `TYPE` | Name | Len | Meaning | § |
 |---|---|---|---|---|
 | `0x81` | `DN_HAPTIC` | 4 | Render one waveform, now or not at all. | 8 |
-| `0x82` | `DN_INDICATOR` | 10 | Complete app-owned indicator state. Idempotent. | 7 |
+| `0x82` | `DN_INDICATOR` | 6 | Complete app-owned indicator state. Idempotent. | 7 |
 | `0x83` | `DN_CONFIG` | 4 | Haptic intensity and LED brightness, 0–100. | 7.3 |
 | `0x84` | `DN_HOST` | 3 | Whether the scoreboard half of the path is alive. | 9.2 |
 | `0x85` | `DN_SIMSOC` | 3 | Bench-only: simulated state of charge for `LED_PWR`. | 7.5 |
@@ -277,15 +277,17 @@ Amplitude is not a field. `BEAT` is distinctly weaker than `TAP` as a property o
 ```
 0: 0x82
 1: CTR
-2: f1_mode   0x00 OFF  0x01 SOLID
-3: f1_r  4: f1_g  5: f1_b
-6: f2_mode
-7: f2_r  8: f2_g  9: f2_b
+2: f1_mode    0x00 OFF  0x01 SOLID
+3: f1_colour  0x00 RED  0x01 GREEN  0x02 BLUE  0x03 YELLOW
+4: f2_mode
+5: f2_colour
 ```
 
 One frame asserts the **complete app-owned indicator state of one remote**. There is no partial update and no incremental command, because there is no version of this frame that can leave a remote holding a stale half of its state (WP §6).
 
 `OFF` and `SOLID` only. FS §10.3 makes counter rendering deliberately binary — the exact count is on the scoreboard, and the wrist LEDs answer one question: *does this athlete currently hold this state?* There is exactly one blinking indicator in the system, `LED_PWR` below 10%, and it is remote-local and unreachable from here (§7.4).
+
+`f1_colour`/`f2_colour` name one of a **fixed four-colour palette**, not an RGB triple — the app picks which of red/green/blue/yellow, and the remote decides what that looks like in PWM duty (`common/ind_colour.c`), the same table `LED_LINK` and `LED_PWR` already render from. An out-of-range colour byte is a field error (§4.1), same as an out-of-range mode.
 
 ### 5.6 `UP_TELEMETRY`
 
@@ -375,7 +377,7 @@ The drop must be **counted** (`presses_dropped_no_host`) and reported in the fir
 
 `DN_INDICATOR` is idempotent and always complete. The dongle relays every `STATE` line it receives from the app, unconditionally, without comparing against what it last sent. It holds no cache of indicator state to compare against — a cache would be dongle-held state that can diverge from the scoreboard's, which is the failure mode FS §6.2 exists to prevent, arriving through a different door.
 
-Re-sending an unchanged `DN_INDICATOR` costs one 10-byte frame. Holding a cache costs a class of silent divergence. The trade is not close.
+Re-sending an unchanged `DN_INDICATOR` costs one 6-byte frame. Holding a cache costs a class of silent divergence. The trade is not close.
 
 ### 7.2 `UP_READY` and the reconnection chain
 
@@ -749,7 +751,7 @@ Out of scope to specify, in scope to constrain — the mirror of WP §12.
 | Gesture classification in firmware at 15 / 600 / 150 ms, independent of link state | FS §4.2 |
 | `BEAT` unmistakably weaker than `TAP` on the wrist, through a strap, in motion | FS §11.1. **An open validation item, not an established fact** |
 | Motor spin-up to perceptible within 20 ms | WP §11. The hard floor of the acknowledgement budget |
-| Four RGB indicators, two of them driven only from `DN_INDICATOR` | FS §3.2 |
+| Four RGB indicators over a fixed four-colour palette, two of them driven only from `DN_INDICATOR` | FS §3.2 |
 | Battery measurement good to ±1 percentage point over the discharge curve | §5.6 drives FS §10.1's four-band indication |
 | Flash partition for the provisioning record, and APPROTECT on production units | §10 |
 
@@ -774,7 +776,7 @@ Both ends must handle these. Each has a failure mode that is silent, which is wh
 | A11 | `DN_INDICATOR` identical to the last one received | Applied; nothing re-triggers; no visible change. Idempotence |
 | A12 | Connection from a device with a valid address but no set key | Encryption fails; disconnected; counted. **No GATT access at any point** |
 | A13 | `RR_IDENTITY` reporting `set_serial` other than the dongle's | Disconnected; `ERR SET_MISMATCH` |
-| A14 | `RR_IDENTITY` reporting `radio_proto_major` ≠ 1 | Disconnected; `ERR REMOTE_PROTO_MISMATCH`; remote reported `DISCONNECTED` |
+| A14 | `RR_IDENTITY` reporting `radio_proto_major` ≠ 2 | Disconnected; `ERR REMOTE_PROTO_MISMATCH`; remote reported `DISCONNECTED` |
 | A15 | App supervision expires while both remotes are connected | Both remotes receive `DN_HOST DOWN`; both render `LED_LINK` yellow and the repeating double buzz, **while the radio connections stay up** |
 | A16 | Remote powered on with no dongle present | Renders link-lost from boot. Does not render "connected" pending contact |
 | A17 | Remote leaves and re-enters range within 2 s | App sees `CONNECTING` then `CONNECTED`. **No `DISCONNECTED` line** (§9.4) |
@@ -816,7 +818,7 @@ Nordic's proprietary Low Latency Packet Mode gives a 1 ms connection interval on
 
 ### 15.3 A larger MTU, or Data Length Extension
 
-Rejected, and §4.3 gives the reasoning in full: the 27-byte Link Layer payload is a precondition for the shortest connection intervals, so raising the MTU spends the latency budget to buy throughput this protocol does not need. The largest frame here is 10 bytes.
+Rejected, and §4.3 gives the reasoning in full: the 27-byte Link Layer payload is a precondition for the shortest connection intervals, so raising the MTU spends the latency budget to buy throughput this protocol does not need. The largest fixed-length frame here is 6 bytes; `UP_DIAG`'s freeform payload is capped separately, at 20, by `RFRAME_MAX_LEN`.
 
 At the rung 3 baseline that precondition is not binding, so the rejection rests on the simpler half of the argument: **there is nothing to carry.** A larger MTU would lengthen air time per packet — which §11 counts against the density requirement — in exchange for capacity no frame in §5 uses. It would also quietly foreclose the §12.2 contingency.
 
@@ -855,9 +857,10 @@ A major mismatch is a **refusal to operate**, not a degraded mode (§3.2). A set
 | Version | Change |
 |---|---|
 | 1.0 | Initial. Bluetooth LE, dongle central with two peripheral remotes, SCI with a fallback ladder, provisioned set key with no pairing procedure, device-local counter for gap visibility, per-frame deadlines on the downlink |
+| 2.0 | `DN_INDICATOR`'s `f1_rgb`/`f2_rgb` (§5.5) replaced by `f1_colour`/`f2_colour`, one byte each from a fixed four-colour palette rather than an arbitrary RGB triple. Frame shrinks from 10 to 6 bytes. Changed field meaning and frame length — major by §16's own rule. `radio_proto_major` bumped to 2 |
 
 **Amended 2026-08-10, and deliberately *not* a version bump.** §12.2 now makes rung 3 (7.5 ms, baseline BLE) the specified interval and defers SCI to a contingency; §12.3 is corrected against the v3.4.0 headers. By this section's own rule a changed connection-interval rung is "neither" a major nor a minor change, and the rule is right: nothing on the air moves. The frame set, the counters, the deadline mechanisms and `RR_IDENTITY` are byte-for-byte what v1.0 specified, so a v1.0 peer and an amended peer interoperate exactly as before. **A version number describes the contract, not the tuning**, and bumping it here would train the mismatch check in §3.2 to fire on changes that cannot break anything.
 
 ---
 
-*Governing documents are `SCOPE.md` v1.1 and `SYSTEM_FUNC_SPEC.md` v2.1. The wire protocol counterpart is `PROTOCOL.md` v3.0. Status, milestones, the validation ladder and the results log are in `PLAN.md`; every number in §12 is a prediction awaiting measurement, and `PLAN.md` §7 is where the measurements land.*
+*Governing documents are `SCOPE.md` v1.1 and `SYSTEM_FUNC_SPEC.md` v2.1. The wire protocol counterpart is `PROTOCOL.md` v4.0. Status, milestones, the validation ladder and the results log are in `PLAN.md`; every number in §12 is a prediction awaiting measurement, and `PLAN.md` §7 is where the measurements land.*

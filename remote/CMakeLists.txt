@@ -24,6 +24,7 @@ target_sources(app PRIVATE
   src/indicators.c
   ../common/provisioning.c
   ../common/rframe.c
+  ../common/ind_colour.c
 )
 
 # remote/BUILD_SPEC.md §3: common/ is shared with the dongle by CMake source

@@ -1,6 +1,6 @@
 # RefRemote — Dongle ↔ Scoreboard Wire Protocol
 
-**Version:** 3.0
+**Version:** 4.0
 **Link:** USB CDC-ACM (virtual COM port), nRF52840 dongle ↔ browser via Web Serial
 **Scope:** the wired link between the dongle and the scoreboard application only. The radio link between dongle and wrist remotes is a separate protocol, specified in `RADIO_PROTOCOL.md`; §12 states only what this link assumes of it.
 
@@ -15,6 +15,8 @@
 | **Acknowledgement within ~120 ms** (FS §7.3) | 500 ms confirmation window | 120 ms budget, decomposed and allocated in §11. |
 
 See §14 for the full change list.
+
+**Supersedes v3.0.** `STATE`'s `<f1rgb>`/`<f2rgb>` arguments (§6) carried an arbitrary `RRGGBB` hex triple, chosen by the scoreboard with no knowledge of what the remote's LEDs could actually render true. In practice the app's own brand colours — never calibrated against this hardware — rendered visibly wrong on `LED_F1`/`LED_F2` while the remote's own fixed palette, used by `LED_LINK`/`LED_PWR`, read correctly. v4.0 replaces the hex triple with `<f1colour>`/`<f2colour>`, one of a fixed four-name palette (`RED`/`GREEN`/`BLUE`/`YELLOW`) the remote renders identically across all four indicators (`RADIO_PROTOCOL.md` §5.5, §7). The scoreboard states *which* colour, never *what it looks like* — a changed argument meaning, which forces the major version by this document's own rule (§16).
 
 ---
 
@@ -95,7 +97,7 @@ Accumulate bytes into a line buffer until `\n`. Then strip any trailing `\r`, sp
 | Message | Args | Meaning | §|
 |---|---|---|---|
 | `ACK` | `<seq> [SILENT]` | This event is applied. Fire the acknowledgement tap on its originating remote. | 5.3 |
-| `STATE` | `<remote> <f1> <f1rgb> <f2> <f2rgb>` | Complete app-owned indicator state for one remote. Idempotent. | 6 |
+| `STATE` | `<remote> <f1> <f1colour> <f2> <f2colour>` | Complete app-owned indicator state for one remote. Idempotent. | 6 |
 | `HAP` | `<target> <waveform>` | Render one haptic waveform. | 9 |
 | `CFG` | `<target> <haptic> <bright>` | Haptic intensity and LED brightness, 0–100. | 6.4 |
 | `SIMSOC` | `<target> <pct>` | Bench-only: simulated `LED_PWR` state of charge. | 6.5 |
@@ -225,8 +227,8 @@ The range is `0`–`65535` rather than v2.0's `0`–`999`. A held clock adjustme
 ## 6. `STATE` — indicator assertion
 
 ```
-STATE RED SOLID 00A0FF OFF 000000
-STATE GREEN OFF 000000 SOLID C2F000
+STATE RED SOLID BLUE OFF RED
+STATE GREEN OFF RED SOLID GREEN
 ```
 
 One line asserts **the complete app-owned indicator state of one remote**. There is no partial update and no incremental command, because there is no version of this message that can leave a remote holding a stale half of its state.
@@ -235,8 +237,8 @@ One line asserts **the complete app-owned indicator state of one remote**. There
 |---|---|
 | `<remote>` | `RED` \| `GREEN` |
 | `<f1>` | `OFF` \| `SOLID` — mode of `LED_F1` |
-| `<f1rgb>` | `RRGGBB` hex, six chars. Ignored when mode is `OFF`; send `000000`. |
-| `<f2>` `<f2rgb>` | As above, for `LED_F2` |
+| `<f1colour>` | `RED` \| `GREEN` \| `BLUE` \| `YELLOW`. Ignored when mode is `OFF`; send `RED` by convention, the same role `000000` played under v3.0 — a syntactically valid placeholder for a state where the value doesn't matter. |
+| `<f2>` `<f2colour>` | As above, for `LED_F2` |
 
 ### 6.1 What the app owns and what it does not
 
@@ -246,7 +248,7 @@ One line asserts **the complete app-owned indicator state of one remote**. There
 
 Modes are `OFF` and `SOLID` only. FS §10.3 makes counter rendering deliberately binary — off at zero, solid when non-zero — because the exact count is on the scoreboard and a referee mid-match is looking at the mat. The wrist LEDs answer one question: *does this athlete currently hold this state?*
 
-Colour is per-role and comes from ruleset configuration (FS §12.2 `led_colour`), so a referee can tell a clock indicator from a counter or a flag without recalling which ruleset is loaded. The protocol carries the colour and has no opinion about what it means.
+Colour is per-role and comes from ruleset configuration (FS §12.2 `led_colour`), so a referee can tell a clock indicator from a counter or a flag without recalling which ruleset is loaded. The protocol carries *which* colour and has no opinion about what it means — but unlike v3.0, it is no longer a channel for an arbitrary value: `led_colour` and this argument are both drawn from the same fixed four-name palette the remote actually renders, not a hex value the app picked without knowing what the hardware could show true.
 
 Blink modes are absent deliberately. There is exactly one blinking indicator in the system — `LED_PWR` below 10% — and it is remote-local. Every app-owned indicator answers a binary question, and adding a blink to this message would be adding a vocabulary for a distinction nothing needs to make.
 
@@ -408,7 +410,7 @@ Every command is typeable. With a terminal on the port:
 
 ```
 INFO
-STATE RED SOLID 00A0FF OFF 000000
+STATE RED SOLID BLUE OFF RED
 HAP BOTH LONG
 CFG BOTH 100 100
 ECHO hello
@@ -528,8 +530,8 @@ Both parsers must handle these without crashing, and must correctly parse the ne
 | T9c | An overlong run split across several reads, then `\n`, then a valid line | Identical to T9 — the discard state survives the chunk boundary |
 | T10 | `\n\n\nEVT ADD_POINT PRESS RED 17\n` | Empty lines ignored, event parsed |
 | T11 | `EVT ADD_POINT PRESS RED 65536\n` | Ignored — seq out of range |
-| T12 | `STATE RED SOLID 00A0FF OFF 000000\n` | Parsed |
-| T13 | `STATE RED SOLID 00A0F OFF 000000\n` (5-char hex) | Ignored, logged |
+| T12 | `STATE RED SOLID BLUE OFF RED\n` | Parsed |
+| T13 | `STATE RED SOLID ORANGE OFF RED\n` (not in the four-colour palette) | Ignored, logged |
 | T14 | `LINK RED CONNECTED\n` (no rssi) | Ignored, logged — §7 makes rssi mandatory |
 | T15 | `HAP BOTH SPIN\n` (unknown waveform) | Ignored, logged |
 | T16 | `EVT` with the same `seq` twice | Applied once; the duplicate is dropped and counted |
@@ -571,5 +573,6 @@ T3, T4 and T5 are the ones that matter for framing. T7 is the v2.0-compatibility
 | 1.0 | Binary framing, CRC8, ACK/retry, dedup, 1 Hz `TIMER_STATE`. Superseded. |
 | 2.0 | Newline-delimited ASCII. Dongle-local heartbeat driven by clock state. Transport ACK replaced by end-to-end `CONFIRM`. Link supervision as primary fail-safe. |
 | 3.0 | Buttons and gestures rather than officiating actions. Scoreboard-commanded heartbeat and haptics. Full indicator state assertion. 120 ms acknowledgement budget. Officiating set identity. |
+| 4.0 | `STATE`'s `<f1rgb>`/`<f2rgb>` hex arguments replaced by `<f1colour>`/`<f2colour>`, one of a fixed `RED`/`GREEN`/`BLUE`/`YELLOW` palette. Changed argument meaning — major by this section's own rule. |
 
 Additive changes — new keywords, new optional trailing arguments — bump the minor version; unknown-keyword tolerance in §2.2 makes them non-breaking. Changing the meaning, argument count or argument order of an existing message bumps the major version.

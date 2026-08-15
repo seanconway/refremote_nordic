@@ -58,6 +58,13 @@ static const char *const ind_mode_names[PROTO_IND_MODE_COUNT] = {
 	[PROTO_IND_SOLID] = "SOLID",
 };
 
+static const char *const ind_colour_names[PROTO_COLOUR_COUNT] = {
+	[PROTO_COLOUR_RED]    = "RED",
+	[PROTO_COLOUR_GREEN]  = "GREEN",
+	[PROTO_COLOUR_BLUE]   = "BLUE",
+	[PROTO_COLOUR_YELLOW] = "YELLOW",
+};
+
 static const char *const link_state_names[PROTO_LINK_STATE_COUNT] = {
 	[PROTO_LINK_CONNECTED]    = "CONNECTED",
 	[PROTO_LINK_CONNECTING]   = "CONNECTING",
@@ -92,6 +99,11 @@ const char *proto_waveform_name(enum proto_waveform w)
 const char *proto_ind_mode_name(enum proto_ind_mode m)
 {
 	return (m < PROTO_IND_MODE_COUNT) ? ind_mode_names[m] : "?";
+}
+
+const char *proto_ind_colour_name(enum proto_ind_colour c)
+{
+	return (c < PROTO_COLOUR_COUNT) ? ind_colour_names[c] : "?";
 }
 
 const char *proto_link_state_name(enum proto_link_state s)
@@ -270,44 +282,6 @@ static bool parse_pct(const char *s, uint8_t *out)
 	return true;
 }
 
-static bool hex_nibble(char c, uint8_t *out)
-{
-	if (c >= '0' && c <= '9') {
-		*out = (uint8_t)(c - '0');
-	} else if (c >= 'a' && c <= 'f') {
-		*out = (uint8_t)(c - 'a' + 10);
-	} else if (c >= 'A' && c <= 'F') {
-		*out = (uint8_t)(c - 'A' + 10);
-	} else {
-		return false;
-	}
-	return true;
-}
-
-/*
- * §6: exactly six hex characters, case-insensitive on receive.
- *
- * The length is checked *first*, and that ordering is the requirement. A parser
- * that accumulated digits until it ran out would read T13's five-character
- * `00A0F` as 0x00A0F and render a colour that is wrong but entirely plausible —
- * on a wrist indicator nobody is looking at closely.
- */
-static bool parse_rgb6(const char *s, uint8_t rgb[3])
-{
-	if (strlen(s) != 6u) {
-		return false;
-	}
-	for (size_t i = 0; i < 3u; i++) {
-		uint8_t hi, lo;
-
-		if (!hex_nibble(s[i * 2u], &hi) || !hex_nibble(s[i * 2u + 1u], &lo)) {
-			return false;
-		}
-		rgb[i] = (uint8_t)((hi << 4) | lo);
-	}
-	return true;
-}
-
 static bool lookup_name(const char *const *table, size_t count,
 			const char *s, uint32_t *idx)
 {
@@ -358,11 +332,11 @@ static void parse_ack(char *rest, struct proto_msg *out)
 	out->ack.silent = (n == 2u);
 }
 
-/* STATE <remote> <f1> <f1rgb> <f2> <f2rgb> — §6 */
+/* STATE <remote> <f1> <f1colour> <f2> <f2colour> — §6 */
 static void parse_state(char *rest, struct proto_msg *out)
 {
 	char *tok[PROTO_MAX_TOKENS];
-	uint32_t remote, f1, f2;
+	uint32_t remote, f1, f1c, f2, f2c;
 
 	if (split_tokens(rest, tok, PROTO_MAX_TOKENS) != 5u) {
 		invalid(out, "wrong arg count");
@@ -376,23 +350,25 @@ static void parse_state(char *rest, struct proto_msg *out)
 		invalid(out, "bad f1 mode");
 		return;
 	}
-	if (!parse_rgb6(tok[2], out->state.f1_rgb)) {
-		invalid(out, "bad f1 rgb");
+	if (!lookup_name(ind_colour_names, PROTO_COLOUR_COUNT, tok[2], &f1c)) {
+		invalid(out, "bad f1 colour");
 		return;
 	}
 	if (!lookup_name(ind_mode_names, PROTO_IND_MODE_COUNT, tok[3], &f2)) {
 		invalid(out, "bad f2 mode");
 		return;
 	}
-	if (!parse_rgb6(tok[4], out->state.f2_rgb)) {
-		invalid(out, "bad f2 rgb");
+	if (!lookup_name(ind_colour_names, PROTO_COLOUR_COUNT, tok[4], &f2c)) {
+		invalid(out, "bad f2 colour");
 		return;
 	}
 
 	out->type = PROTO_STATE;
 	out->state.remote = (enum proto_remote)remote;
 	out->state.f1_mode = (enum proto_ind_mode)f1;
+	out->state.f1_colour = (enum proto_ind_colour)f1c;
 	out->state.f2_mode = (enum proto_ind_mode)f2;
+	out->state.f2_colour = (enum proto_ind_colour)f2c;
 }
 
 /* HAP <target> <waveform> — §9 */

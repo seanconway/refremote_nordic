@@ -157,21 +157,38 @@ static void round_trip_dn_indicator(void)
 {
 	uint8_t buf[RFRAME_MAX_LEN];
 	struct rframe_msg msg;
-	const uint8_t f1[3] = { 10, 20, 30 };
-	const uint8_t f2[3] = { 40, 50, 60 };
 
-	int n = rframe_enc_dn_indicator(buf, sizeof(buf), 1, PROTO_IND_SOLID, f1,
-					PROTO_IND_OFF, f2);
+	int n = rframe_enc_dn_indicator(buf, sizeof(buf), 1, PROTO_IND_SOLID, PROTO_COLOUR_RED,
+					PROTO_IND_OFF, PROTO_COLOUR_BLUE);
 
-	CHECK(n == 10, "got %d", n);
+	CHECK(n == 6, "got %d", n);
 
 	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
 
 	CHECK(st == RFRAME_OK, "status %d", st);
 	CHECK(msg.dn_indicator.f1_mode == PROTO_IND_SOLID, "f1_mode %d", msg.dn_indicator.f1_mode);
-	CHECK(memcmp(msg.dn_indicator.f1_rgb, f1, 3) == 0, "f1_rgb mismatch");
+	CHECK(msg.dn_indicator.f1_colour == PROTO_COLOUR_RED, "f1_colour %d", msg.dn_indicator.f1_colour);
 	CHECK(msg.dn_indicator.f2_mode == PROTO_IND_OFF, "f2_mode %d", msg.dn_indicator.f2_mode);
-	CHECK(memcmp(msg.dn_indicator.f2_rgb, f2, 3) == 0, "f2_rgb mismatch");
+	CHECK(msg.dn_indicator.f2_colour == PROTO_COLOUR_BLUE, "f2_colour %d", msg.dn_indicator.f2_colour);
+}
+
+/* A field byte outside PROTO_COLOUR_COUNT must be rejected — the frame-codec
+ * counterpart to T13's old hex-strictness check, now that colour is a small
+ * enum rather than an RGB triple. */
+static void dn_indicator_rejects_bad_colour(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	struct rframe_msg msg;
+
+	int n = rframe_enc_dn_indicator(buf, sizeof(buf), 1, PROTO_IND_SOLID, PROTO_COLOUR_RED,
+					PROTO_IND_OFF, PROTO_COLOUR_BLUE);
+
+	CHECK(n == 6, "got %d", n);
+	buf[3] = (uint8_t)PROTO_COLOUR_COUNT; /* one past the last valid f1 colour */
+
+	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
+
+	CHECK(st == RFRAME_ERR_FIELD, "status %d", st);
 }
 
 /* A11: re-encoding an unchanged DN_INDICATOR must produce a byte-identical
@@ -181,12 +198,11 @@ static void round_trip_dn_indicator(void)
 static void dn_indicator_encode_is_idempotent(void)
 {
 	uint8_t a[RFRAME_MAX_LEN], b[RFRAME_MAX_LEN];
-	const uint8_t rgb[3] = { 1, 2, 3 };
 
-	int na = rframe_enc_dn_indicator(a, sizeof(a), 5, PROTO_IND_SOLID, rgb,
-					 PROTO_IND_SOLID, rgb);
-	int nb = rframe_enc_dn_indicator(b, sizeof(b), 5, PROTO_IND_SOLID, rgb,
-					 PROTO_IND_SOLID, rgb);
+	int na = rframe_enc_dn_indicator(a, sizeof(a), 5, PROTO_IND_SOLID, PROTO_COLOUR_YELLOW,
+					 PROTO_IND_SOLID, PROTO_COLOUR_YELLOW);
+	int nb = rframe_enc_dn_indicator(b, sizeof(b), 5, PROTO_IND_SOLID, PROTO_COLOUR_YELLOW,
+					 PROTO_IND_SOLID, PROTO_COLOUR_YELLOW);
 
 	CHECK(na == nb, "%d vs %d", na, nb);
 	CHECK(memcmp(a, b, (size_t)na) == 0, "identical calls produced different bytes");
@@ -438,6 +454,7 @@ int main(void)
 		{ "UP_DIAG over payload budget",      up_diag_over_budget_rejected },
 		{ "round trip: DN_HAPTIC",            round_trip_dn_haptic },
 		{ "round trip: DN_INDICATOR",         round_trip_dn_indicator },
+		{ "DN_INDICATOR rejects bad colour",  dn_indicator_rejects_bad_colour },
 		{ "DN_INDICATOR encode is idempotent (A11)", dn_indicator_encode_is_idempotent },
 		{ "round trip: DN_CONFIG",            round_trip_dn_config },
 		{ "round trip: DN_HOST",              round_trip_dn_host },

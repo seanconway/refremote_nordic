@@ -1,4 +1,5 @@
 #include "indicators.h"
+#include "ind_colour.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -26,18 +27,20 @@ static const struct gpio_dt_spec led_link = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpi
 
 static bool radio_up;
 static bool host_up;
-static uint8_t f1_rgb_cache[3];
 static enum proto_ind_mode f1_mode_cache;
+static enum proto_ind_colour f1_colour_cache;
 static uint8_t brightness_pct = 100;
 
 static void rgb_apply(void)
 {
+	uint8_t rgb[3] = { 0, 0, 0 };
 	uint32_t r = 0, g = 0, b = 0;
 
 	if (f1_mode_cache == PROTO_IND_SOLID) {
-		r = ((uint32_t)f1_rgb_cache[0] * brightness_pct) / 100u;
-		g = ((uint32_t)f1_rgb_cache[1] * brightness_pct) / 100u;
-		b = ((uint32_t)f1_rgb_cache[2] * brightness_pct) / 100u;
+		ind_colour_rgb(f1_colour_cache, rgb);
+		r = ((uint32_t)rgb[0] * brightness_pct) / 100u;
+		g = ((uint32_t)rgb[1] * brightness_pct) / 100u;
+		b = ((uint32_t)rgb[2] * brightness_pct) / 100u;
 	}
 
 	/* 8-bit channel value (0-255) scaled onto each PWM period. */
@@ -58,16 +61,14 @@ static void update_link(void)
 	(void)gpio_pin_set_dt(&led_link, (radio_up && host_up) ? 1 : 0);
 }
 
-void indicators_set(enum proto_ind_mode f1_mode, const uint8_t f1_rgb[3],
-		    enum proto_ind_mode f2_mode, const uint8_t f2_rgb[3])
+void indicators_set(enum proto_ind_mode f1_mode, enum proto_ind_colour f1_colour,
+		    enum proto_ind_mode f2_mode, enum proto_ind_colour f2_colour)
 {
 	ARG_UNUSED(f2_mode); /* F2 unrenderable on this board — no LED left */
-	ARG_UNUSED(f2_rgb);
+	ARG_UNUSED(f2_colour);
 
 	f1_mode_cache = f1_mode;
-	f1_rgb_cache[0] = f1_rgb[0];
-	f1_rgb_cache[1] = f1_rgb[1];
-	f1_rgb_cache[2] = f1_rgb[2];
+	f1_colour_cache = f1_colour;
 	rgb_apply();
 }
 
@@ -81,6 +82,16 @@ void indicators_set_radio_up(bool up)
 {
 	radio_up = up;
 	update_link();
+}
+
+/* LED_PWR has no surface on this board either — same treatment as F2 above:
+ * this board has exactly two LED positions (F1's RGB and LED_LINK's plain
+ * green), and DN_SIMSOC's battery ladder has nowhere left to render.
+ * Recorded as a limitation, not silently dropped; the ladder itself is
+ * confirmed on the DK, which has LED_PWR. */
+void indicators_set_battery_pct(uint8_t pct)
+{
+	ARG_UNUSED(pct);
 }
 
 void indicators_set_host_up(bool up)

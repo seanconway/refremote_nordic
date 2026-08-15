@@ -1,6 +1,6 @@
 # Dongle firmware — USB bridge
 
-Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v3.0** over USB CDC-ACM. The radio layer is not implemented yet; the `TEST` modes of §10.2 stand in for real remotes, which is what lets the whole USB interface be validated first.
+Implements the dongle half of [`PROTOCOL.md`](../PROTOCOL.md) **v4.0** over USB CDC-ACM. The radio layer is not implemented yet; the `TEST` modes of §10.2 stand in for real remotes, which is what lets the whole USB interface be validated first.
 
 - **Board:** `raytac_mdbt50q_cx_40_dongle/nrf52840` — Raytac MDBT50Q-CX-40, MDBT50Q-P1M module, nRF52840, USB-C
 - **SDK:** nRF Connect SDK **v3.4.0** (LTS; the last release supporting nRF52)
@@ -131,7 +131,7 @@ TEST 4                                  → 32 events, 16 per remote
 TEST 0                                  → stops test mode, re-enables supervision
 ```
 
-**The supervision timeout will fire during manual idling — that is correct behaviour** (`PROTOCOL.md` §8). Type `PING` to hold it open, or `TEST 3` to suspend supervision for bench work. At v3.0 `TEST 3` is the *only* way to keep a bench terminal quiet, because the dongle-side clock that used to gate the timeout is gone — so the standing trap of leaving it on gets reached for more often, not less.
+**The supervision timeout will fire during manual idling — that is correct behaviour** (`PROTOCOL.md` §8). Type `PING` to hold it open, or `TEST 3` to suspend supervision for bench work. At v4.0 `TEST 3` is the *only* way to keep a bench terminal quiet, because the dongle-side clock that used to gate the timeout is gone — so the standing trap of leaving it on gets reached for more often, not less.
 
 ### What to look for
 

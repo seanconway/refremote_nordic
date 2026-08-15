@@ -2,7 +2,7 @@
 
 **What this document is.** The implementable contract for the remote firmware in its first form: an nRF52840 DK standing in for a wrist remote that does not exist yet.
 
-**What it is not.** It does not restate `RADIO_PROTOCOL.md` v1.0 — that is the contract, cited *RP §n*, and where this document and it disagree, **it wins**. `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` (cited *FS §n*) win over both.
+**What it is not.** It does not restate `RADIO_PROTOCOL.md` v2.0 — that is the contract, cited *RP §n*, and where this document and it disagree, **it wins**. `SCOPE.md` and `SYSTEM_FUNC_SPEC.md` (cited *FS §n*) win over both.
 
 | For | See |
 |---|---|
@@ -54,10 +54,12 @@ All seven are `GPIO_PULL_UP | GPIO_ACTIVE_LOW` — the three external buttons re
 
 | Indicator | R / G / B pins | PWM instance |
 |---|---|---|
-| `LED_F1` | P0.14 / P0.15 / P0.16 | `pwm1`, channels 0-2 |
-| `LED_F2` | P0.26 / P0.27 / P0.28 | `pwm2`, channels 0-2 |
+| `LED_F1` | P0.26 / P0.27 / P0.28 | `pwm2`, channels 0-2 |
+| `LED_F2` | P0.14 / P0.15 / P0.16 | `pwm1`, channels 0-2 |
 | `LED_LINK` | P0.29 / P0.30 / P0.31 | `pwm3`, channels 0-2 |
 | `LED_PWR` | P1.01 / P1.02 / P1.03 | channel 3 of `pwm1`/`pwm2`/`pwm3` respectively |
+
+`LED_F1`/`LED_F2` are swapped from the devicetree node names (`led_f1_*`/`led_f2_*`) that back them — the `f1r`/`f1g`/`f1b`/`f2r`/`f2g`/`f2b` aliases in the overlay, which `indicators.c` and this table both go by, point at the other node. The node names still match their physical pins; only the alias-level mapping to the protocol's `LED_F1`/`LED_F2` moved.
 
 `LED_PWR`'s three channels are parked one to a spare channel on each of the other three instances rather than claiming a fourth, and deliberately on the DK's near-radio-restricted `P1.0x` bank (Nordic docs: PWM is not low-frequency I/O) since `LED_PWR` isn't on the `DN_INDICATOR` colour-accuracy path validated first. This does not carry forward to the custom PCB, which has no such forced pin scarcity.
 
@@ -83,7 +85,7 @@ Consequence, still true: `led0`'s `gpio-leds` node is **not used**. The haptic p
 
 | File | Owns | Zephyr-free |
 |---|---|---|
-| `../common/rframe.c/.h` | RP v1.0 frame codec, both directions, `CTR` arithmetic | **Yes — enforced** |
+| `../common/rframe.c/.h` | RP v2.0 frame codec, both directions, `CTR` arithmetic | **Yes — enforced** |
 | `../common/provisioning.c/.h` | Record layout, `provisioning_validate()` | **Yes — enforced** |
 | `src/link.c` | BLE peripheral, advertising, the RefRemote Link Service, uplink `CTR` | No |
 | `src/buttons.c` | Debounce and gesture classification | No |
@@ -149,7 +151,7 @@ GATT server. Base UUID `8f2a0000-6b1f-4d5a-9c3e-1d7b4a0e5c21`.
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | 1 | `radio_proto_major` = 1 |
+| 0 | 1 | `radio_proto_major` = 2 |
 | 1 | 1 | `radio_proto_minor` = 0 |
 | 2 | 1 | `role` — `0x01` RED, `0x02` GREEN |
 | 3–5 | 3 | `fw_major`, `fw_minor`, `fw_patch` |

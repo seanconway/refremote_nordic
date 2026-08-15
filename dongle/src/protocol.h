@@ -22,7 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PROTO_VERSION       "3.0"
+#define PROTO_VERSION       "4.0"
 
 /* §2.1: 120 bytes including the terminator. */
 #define PROTO_MAX_LINE      120u
@@ -126,6 +126,26 @@ enum proto_ind_mode {
 	PROTO_IND_MODE_COUNT
 };
 
+/*
+ * §6.2. A fixed four-colour palette, not an RGB triple — the app tells the
+ * remote which of these to show, never an exact value. LED_F1/LED_F2 (this
+ * frame) and LED_LINK/LED_PWR (remote-local, RADIO_PROTOCOL.md §7.2/§7.4)
+ * render every one of these identically off the same table
+ * (common/ind_colour.c), so a referee learns one "yellow" for the whole
+ * wrist rather than a colour per indicator that happens to have the same
+ * name. Arbitrary hex on the wire was the mistake this replaces: the app's
+ * own brand colours were never calibrated against this hardware, and it
+ * showed as a green-tinted "red" and a teal-tinted "green" on LED_F1/LED_F2
+ * while LED_LINK/LED_PWR, driven from the same firmware palette, read true.
+ */
+enum proto_ind_colour {
+	PROTO_COLOUR_RED = 0,
+	PROTO_COLOUR_GREEN,
+	PROTO_COLOUR_BLUE,
+	PROTO_COLOUR_YELLOW,
+	PROTO_COLOUR_COUNT
+};
+
 enum proto_link_state {
 	PROTO_LINK_CONNECTED = 0,
 	PROTO_LINK_CONNECTING,
@@ -177,9 +197,9 @@ struct proto_msg {
 		struct {
 			enum proto_remote remote;
 			enum proto_ind_mode f1_mode;
-			uint8_t f1_rgb[3];
+			enum proto_ind_colour f1_colour;
 			enum proto_ind_mode f2_mode;
-			uint8_t f2_rgb[3];
+			enum proto_ind_colour f2_colour;
 		} state;
 
 		struct {
@@ -269,6 +289,7 @@ const char *proto_remote_name(enum proto_remote r);
 const char *proto_target_name(enum proto_target t);
 const char *proto_waveform_name(enum proto_waveform w);
 const char *proto_ind_mode_name(enum proto_ind_mode m);
+const char *proto_ind_colour_name(enum proto_ind_colour c);
 const char *proto_link_state_name(enum proto_link_state s);
 
 /* ------------------------------------------------------------------------ */

@@ -11,14 +11,14 @@ config PROVISIONING_HEADER_DIR
 
 config REMOTE_TEST_RADIO_PROTO_MAJOR
 	int "RR_IDENTITY radio_proto_major to report (bench test only)"
-	default 1
+	default 2
 	help
 	  link.c (reused unchanged from remote/src/) references this symbol
 	  directly — remote/Kconfig's own option, duplicated here rather than
 	  shared, since Kconfig has no cross-application include mechanism.
 	  Same default, same reasoning: A14 has no provisioning-record
 	  representation, so this is the one deliberate build-time override,
-	  defaulting to the real value.
+	  defaulting to the real value (2 as of RADIO_PROTOCOL.md v2.0).
 
 config REMOTE_DUMMY_STIM_INTERVAL_MS
 	int "Self-stimulus press interval (ms)"

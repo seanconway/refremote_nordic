@@ -1,6 +1,6 @@
 /*
  * The BLE central: two fixed connections, one per wrist remote, per
- * RADIO_PROTOCOL.md v1.0 and dongle/BUILD_SPEC.md §7. CONFIG_DONGLE_RADIO=y.
+ * RADIO_PROTOCOL.md v2.0 and dongle/BUILD_SPEC.md §7. CONFIG_DONGLE_RADIO=y.
  *
  * The connection lifecycle (BUILD_SPEC §7.1) is the contract this file exists
  * to implement, in this order and no other:
@@ -9,7 +9,7 @@
  *     -> bt_nrf_conn_set_ltk() from the provisioned set_key
  *     -> bt_conn_set_security(); no GATT operation before encryption completes
  *     -> discover the RefRemote Link Service, read RR_IDENTITY
- *     -> validate radio_proto_major == 1 and set_serial matches ours
+ *     -> validate radio_proto_major == 2 and set_serial matches ours
  *     -> subscribe the RR_UPLINK CCCD
  *     -> only now report LINK ... CONNECTED
  *     -> send the current DN_HOST value
@@ -630,8 +630,10 @@ static void handle_identity_read(struct remote_state *rs, uint8_t err,
 
 	/* A14: a major mismatch is a refusal to operate, not a degraded mode
 	 * (RP §16). Minor mismatches are tolerated by design — nothing here
-	 * currently varies by minor version. */
-	if (data[0] != 1) {
+	 * currently varies by minor version. 2 as of RADIO_PROTOCOL.md v2.0 —
+	 * DN_INDICATOR's colour field changed shape (§5.5), which is a major
+	 * bump by this document's own rule (§16). */
+	if (data[0] != 2) {
 		fail_connection(rs, "RR_IDENTITY proto major mismatch",
 				"REMOTE_PROTO_MISMATCH");
 		return;
@@ -1185,8 +1187,9 @@ int radio_send_indicator(enum proto_remote r, const struct indicator_state *s)
 		return -1;
 	}
 
-	n = rframe_enc_dn_indicator(buf, sizeof(buf), 0, (enum proto_ind_mode)s->f1_mode,
-				    s->f1_rgb, (enum proto_ind_mode)s->f2_mode, s->f2_rgb);
+	n = rframe_enc_dn_indicator(buf, sizeof(buf), 0,
+				    (enum proto_ind_mode)s->f1_mode, (enum proto_ind_colour)s->f1_colour,
+				    (enum proto_ind_mode)s->f2_mode, (enum proto_ind_colour)s->f2_colour);
 	if (n < 0) {
 		return -1;
 	}

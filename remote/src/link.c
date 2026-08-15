@@ -198,8 +198,8 @@ static void handle_downlink_write(const uint8_t *data, uint16_t length)
 		haptic_render(msg.dn_haptic.waveform, msg.dn_haptic.ttl_4ms);
 		break;
 	case RFRAME_DN_INDICATOR:
-		indicators_set(msg.dn_indicator.f1_mode, msg.dn_indicator.f1_rgb,
-			       msg.dn_indicator.f2_mode, msg.dn_indicator.f2_rgb);
+		indicators_set(msg.dn_indicator.f1_mode, msg.dn_indicator.f1_colour,
+			       msg.dn_indicator.f2_mode, msg.dn_indicator.f2_colour);
 		break;
 	case RFRAME_DN_CONFIG:
 		haptic_set_scale(msg.dn_config.haptic_scale);
@@ -478,7 +478,7 @@ int link_init(const struct provisioning_record *prov, struct k_work_q *workq)
 	k_work_init(&link_evt_work, link_evt_work_handler);
 
 	memset(identity_buf, 0, sizeof(identity_buf));
-	/* CONFIG_REMOTE_TEST_RADIO_PROTO_MAJOR defaults to 1, the real value —
+	/* CONFIG_REMOTE_TEST_RADIO_PROTO_MAJOR defaults to 2, the real value —
 	 * see remote/Kconfig. Only the A14 negative-case build ever sets it
 	 * to anything else. */
 	identity_buf[0] = CONFIG_REMOTE_TEST_RADIO_PROTO_MAJOR;

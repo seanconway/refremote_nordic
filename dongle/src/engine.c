@@ -884,9 +884,9 @@ void engine_on_line(char *line)
 		struct indicator_state s;
 
 		s.f1_mode = (uint8_t)msg.state.f1_mode;
+		s.f1_colour = (uint8_t)msg.state.f1_colour;
 		s.f2_mode = (uint8_t)msg.state.f2_mode;
-		memcpy(s.f1_rgb, msg.state.f1_rgb, sizeof(s.f1_rgb));
-		memcpy(s.f2_rgb, msg.state.f2_rgb, sizeof(s.f2_rgb));
+		s.f2_colour = (uint8_t)msg.state.f2_colour;
 
 		/*
 		 * Relayed unconditionally, with NO dongle-side indicator cache.
@@ -896,7 +896,7 @@ void engine_on_line(char *line)
 		 * temptation is real. It is refused because a cache is
 		 * dongle-held state that can diverge from the scoreboard's —
 		 * the FS §6.2 failure mode by name — and it diverges silently.
-		 * Re-sending an unchanged 10-byte frame costs one frame.
+		 * Re-sending an unchanged 6-byte frame costs one frame.
 		 * Holding a cache costs a class of bug.
 		 *
 		 * The emulator does hold one, for its remote mockups. On this

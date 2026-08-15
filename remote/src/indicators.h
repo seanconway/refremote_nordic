@@ -32,9 +32,14 @@ int indicators_init(struct k_work_q *workq);
 /* DN_INDICATOR: complete app-owned state, asserted whole (§7.1). Applying an
  * identical frame must change nothing and re-trigger nothing (A11) — true
  * here because every PWM pulse write is idempotent, not because of any
- * explicit comparison against the previous frame. */
-void indicators_set(enum proto_ind_mode f1_mode, const uint8_t f1_rgb[3],
-		    enum proto_ind_mode f2_mode, const uint8_t f2_rgb[3]);
+ * explicit comparison against the previous frame.
+ *
+ * Colour is one of the fixed PROTO_COLOUR_* palette (protocol.h), never an
+ * RGB triple — the app picks which of red/green/blue/yellow, this board
+ * decides what that looks like in PWM duty (common/ind_colour.c), same as
+ * LED_LINK and LED_PWR already do. */
+void indicators_set(enum proto_ind_mode f1_mode, enum proto_ind_colour f1_colour,
+		    enum proto_ind_mode f2_mode, enum proto_ind_colour f2_colour);
 
 /* DN_CONFIG's led_brightness (0-100), applied multiplicatively to whatever
  * colour is currently set on every rendered indicator — real PWM levels now

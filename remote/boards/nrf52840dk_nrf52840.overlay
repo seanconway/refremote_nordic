@@ -82,12 +82,17 @@
 		sw5 = &ext_button_1;
 		sw6 = &ext_button_2;
 
-		f1r = &led_f1_r;
-		f1g = &led_f1_g;
-		f1b = &led_f1_b;
-		f2r = &led_f2_r;
-		f2g = &led_f2_g;
-		f2b = &led_f2_b;
+		/* Swapped vs the led_f1_r/g/b and led_f2_r/g/b node names: F1's
+		 * protocol colour now renders on the P0.26-28/pwm2 physical LED
+		 * and F2's on P0.14-16/pwm1 — indicators.c and BUILD_SPEC.md's
+		 * hardware map both go by these aliases, not the node names,
+		 * so this is the one place the swap has to happen. */
+		f1r = &led_f2_r;
+		f1g = &led_f2_g;
+		f1b = &led_f2_b;
+		f2r = &led_f1_r;
+		f2g = &led_f1_g;
+		f2b = &led_f1_b;
 		linkr = &led_link_r;
 		linkg = &led_link_g;
 		linkb = &led_link_b;

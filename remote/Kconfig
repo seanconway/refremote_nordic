@@ -16,15 +16,16 @@ config PROVISIONING_HEADER_DIR
 
 config REMOTE_TEST_RADIO_PROTO_MAJOR
 	int "RR_IDENTITY radio_proto_major to report (bench test only)"
-	default 1
+	default 2
 	help
 	  A14 (RADIO_PROTOCOL.md §14): radio_proto_major has no provisioning-
-	  record representation — RP §3.2 fixes it at 1 for this revision — so
-	  there is no wrong-header way to build the A14 negative case the way
-	  A12/A13/A19 are built. This is the one deliberate exception: a
-	  bench-only override, defaulting to the real value so an ordinary
-	  build is unaffected, set to anything else only for the one negative-
-	  case build (PLAN.md queue step S2/S3).
+	  record representation — RP §3.2 fixes it at 2 for this revision
+	  (bumped from 1 when DN_INDICATOR's colour field changed shape, RP
+	  §16) — so there is no wrong-header way to build the A14 negative
+	  case the way A12/A13/A19 are built. This is the one deliberate
+	  exception: a bench-only override, defaulting to the real value so
+	  an ordinary build is unaffected, set to anything else only for the
+	  one negative-case build (PLAN.md queue step S2/S3).
 
 endmenu
 
