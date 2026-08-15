@@ -156,8 +156,8 @@ Identical across every ruleset. These are the referee's muscle memory.
 | `TOGGLE_CLOCK` | Both | Start / stop main match clock | Reset current period clock to full duration |
 | `ADD_POINT` | Both | +1 point to this remote's athlete | — |
 | `REMOVE_POINT` | Both | −1 point to this remote's athlete | — |
-| `FORWARD` | Red | Main clock +1 second | +1 s repeating |
-| `BACKWARD` | Red | Main clock −1 second | −1 s repeating |
+| `FORWARD` | Red | Main clock −1 second | −1 s repeating |
+| `BACKWARD` | Red | Main clock +1 second | +1 s repeating |
 | `FORWARD` | Green | Next period / phase | Jump to last period |
 | `BACKWARD` | Green | Previous period / phase | Jump to first period |
 
@@ -166,6 +166,10 @@ Identical across every ruleset. These are the referee's muscle memory.
 **Clock-state awareness.** The referee is the only agent that starts or stops the main clock, and every press returns an acknowledgement tap. That is sufficient awareness; no separate wrist indication of clock state is required, in any ruleset.
 
 **Score floor.** `REMOVE_POINT` will not drive a score below the ruleset's configured minimum. Presses beyond the floor are acknowledged but have no effect.
+
+**Direction convention.** The match clock counts down, so `FORWARD` — advancing through match time — subtracts from it, and `BACKWARD` — rewinding — adds to it. This was inverted in earlier revisions of this document, which is why it was inverted in the implementation; both are corrected together.
+
+**Secondary clock follows the main clock.** The one situation this control exists for is the referee who is late stopping the clock and needs to wind it back — and, if they overcorrect, wind it forward again. Whenever `FORWARD`/`BACKWARD` adjusts the main clock and the secondary clock is currently owned, the same correction is applied to it, because the interval being corrected is one the secondary clock was also live for: a count-down secondary clock (the activity clock) is adjusted by the same signed amount as the main clock; a count-up secondary clock (riding time) is adjusted by the opposite sign, applied to whichever athlete currently owns it, and floored at zero. An unowned secondary clock is untouched, since it was not accruing during the interval being corrected.
 
 ### 5.2 Default Assignment Rationale
 
@@ -274,9 +278,16 @@ Because these thresholds and carry-over rules have changed across NCAA rules cyc
 
 **Display**
 
-The net differential is displayed **adjacent to the score of the athlete it currently favours**, moving with the advantage as it changes hands. The referee turning to read the final score sees the advantage and the athlete it belongs to in the same look, without interpreting a sign or recalling a convention.
+Favour and ownership are two different facts and the display answers them separately, because they are not always the same athlete — the wrestler ahead on accumulated riding time is not necessarily the wrestler currently accruing it.
+
+- The net differential is displayed **centred beneath the main clock**, not beside either athlete's score. Positioning it under one score answered "who does this favour" at the cost of "who is it counting for right now" — unreadable exactly when the clock was stopped and no accrual could be observed to infer direction from.
+- **The readout is coloured in the athlete it currently favours** — athlete red or athlete green — so favour is still read at a glance, from the centre rather than from a side.
+- **An independent coloured arrow, in the owning athlete's colour, points to that athlete's side of the board**, whether or not that athlete is the one currently favoured. This is the one place the two facts can disagree: the arrow can point one way while the readout is coloured for the other athlete, and both are simultaneously true.
+- Net effect while an athlete accrues against a standing deficit: the readout counts down in the *other* athlete's colour as the deficit closes, then — the instant accrual overtakes it — switches colour to the accruing athlete and counts up from zero. The arrow does not move or change colour through that transition; only the readout does, because only favour changed.
 
 The display persists after time expires. No reminder is issued and none is needed — a match ending on the clock always ends with the referee reading the scoreboard, and a match ending by fall ends the bout outright, where riding time is not a factor.
+
+The freestyle/Greco-Roman activity clock (§6.4) is unaffected by this: it already reads unambiguously, since it is shown only on the remote's side that currently owns it and there is no favour/ownership distinction to separate.
 
 ### 6.4 Activity Clock — Count-Down Polarity (freestyle / Greco-Roman)
 
