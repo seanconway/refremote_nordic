@@ -155,6 +155,22 @@ enum rframe_decode_status rframe_decode(const uint8_t *buf, size_t len,
 		return RFRAME_OK;
 	}
 
+	case RFRAME_DN_SIMSOC: {
+		uint8_t pct;
+
+		if (len != 3) {
+			return RFRAME_ERR_LENGTH;
+		}
+		pct = buf[2];
+		if (pct > 100) {
+			return RFRAME_ERR_FIELD;
+		}
+		out->type = RFRAME_DN_SIMSOC;
+		out->ctr = buf[1];
+		out->dn_simsoc.pct = pct;
+		return RFRAME_OK;
+	}
+
 	default:
 		return RFRAME_ERR_UNKNOWN_TYPE;
 	}
@@ -279,6 +295,17 @@ int rframe_enc_dn_host(uint8_t *out, size_t cap, uint8_t ctr, bool up)
 	return 3;
 }
 
+int rframe_enc_dn_simsoc(uint8_t *out, size_t cap, uint8_t ctr, uint8_t pct)
+{
+	if (cap < 3 || pct > 100) {
+		return -1;
+	}
+	out[0] = RFRAME_DN_SIMSOC;
+	out[1] = ctr;
+	out[2] = pct;
+	return 3;
+}
+
 /* ------------------------------------------------------------------------ */
 /* CTR arithmetic                                                            */
 /* ------------------------------------------------------------------------ */
@@ -343,6 +370,7 @@ const char *rframe_type_name(enum rframe_type t)
 	case RFRAME_DN_INDICATOR: return "DN_INDICATOR";
 	case RFRAME_DN_CONFIG:    return "DN_CONFIG";
 	case RFRAME_DN_HOST:      return "DN_HOST";
+	case RFRAME_DN_SIMSOC:    return "DN_SIMSOC";
 	default:                  return "?";
 	}
 }

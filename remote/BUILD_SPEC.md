@@ -26,40 +26,56 @@ The product remote has **seven buttons, four RGB indicators, an ERM with a drive
 
 | Not reached | Why | Settled by |
 |---|---|---|
-| Indicator **colour** | `DN_INDICATOR` carries RGB per indicator; the DK's LEDs are single-colour and show mode only. Verify the colour fields by reading them out over RTT and treat the rendering as unvalidated | Real RGB hardware |
 | **Anything haptic** | An LED is not a motor. Brightness is not amplitude | R3, R4, with a real ERM on a real strap |
-| `LED_PWR` and state of charge | The DK is bus-powered. `UP_TELEMETRY.battery_pct` is **synthetic** — see §8.3 | Real battery and PMIC |
-| Tactile discrimination between buttons | Four identical DK buttons; the product's are shaped and sized differently, and `TOGGLE_CLOCK` is an oversized tactile datum | Enclosure design |
+| Real state of charge | `LED_PWR` renders a real 3-band ladder (FS §10.1) off `DN_SIMSOC` (RADIO_PROTOCOL.md §7.5, bench-only), not off a real fuel gauge. `UP_TELEMETRY.battery_pct` is still **synthetic** — see §8.3 | Real battery and PMIC |
+| Tactile discrimination between buttons | Bench-wired buttons on a breadboard, not shaped or sized like the product's, and `TOGGLE_CLOCK` is an oversized tactile datum on the product only | Enclosure design |
 
-**The three missing buttons are deliberately not simulated.** `REMOVE_POINT`, `BACKWARD` and `F2` wait for real GPIO. A shift or bank modifier to reach seven from four is **rejected**: it is a second input path, which is the same objection §2.3 of `HISTORY.md` makes to an operator shortcut in the scoreboard, one layer down. It would be firmware the product does not have, exercising timing the product does not have, and it is the only thing under test that would ship nowhere.
+**All seven buttons and all four RGB indicators are now real, wired GPIO/PWM** — the M5 GPIO harness (`PLAN.md` S13/S14), not the four-button/mono-LED DK stand-in this section originally described. Indicator **colour** is genuinely rendered (`indicators.c`), not mode-only; a shift or bank modifier to simulate missing buttons was never used, matching §2.3 of `HISTORY.md`'s objection to a second input path — there simply are no missing buttons left to simulate.
 
 ---
 
 ## 2. Hardware map
 
-The four buttons are mapped for **gesture and semantic coverage, not button coverage.** Each of the seven product buttons is the same code path; what can actually be wrong is the three gestures, the `HOLD_REP` restriction, and the inert/no-op distinction.
+**M5 GPIO harness (PLAN.md S13/S14), superseding the M2 four-button/mono-LED stand-in below.** Physical layout now mirrors the product button map rather than DK button order: the four built-in DK buttons sit where `FORWARD`/`BACKWARD`/`F1`/`F2` fall on the product remote, and three bench-wired buttons (`remote/boards/nrf52840dk_nrf52840.overlay`, aliases `sw4`-`sw6`) take the centre column. All seven product buttons are now real GPIO — none are simulated, and none were ever reached via a shift or bank modifier (§2.3 of `HISTORY.md`'s objection to a second input path).
 
-| DK button | GPIO | Mapped to | Covers |
+| Physical button | GPIO | Mapped to | Gesture class |
 |---|---|---|---|
-| Button 1 | P0.11 | `ADD_POINT` | `PRESS`. The scoring path, and the one repeated-press scoring rests on |
-| Button 2 | P0.12 | `TOGGLE_CLOCK` | `PRESS` **and** `HOLD` at the 600 ms threshold |
-| Button 3 | P0.24 | `FORWARD` | `HOLD_REP` at 150 ms — the only button class that repeats |
-| Button 4 | P0.25 | `F1` | **Inert vs no-op.** `ACK … SILENT` must put nothing on the air (A20) |
+| DK Button 1 | P0.11 | `BACKWARD` | `PRESS` + `HOLD_REP` at 150 ms |
+| DK Button 2 | P0.12 | `FORWARD` | `PRESS` + `HOLD_REP` at 150 ms |
+| DK Button 3 | P0.24 | `F2` | `PRESS` + `HOLD` at 600 ms. **Inert vs no-op** on rulesets that leave F2 unassigned |
+| DK Button 4 | P0.25 | `F1` | `PRESS` + `HOLD` at 600 ms. **Inert vs no-op.** `ACK … SILENT` must put nothing on the air (A20) |
+| External, P0.02 | P0.02 | `ADD_POINT` | `PRESS` only (FS §5.1: no `HOLD` action defined) |
+| External, P0.03 | P0.03 | `TOGGLE_CLOCK` | `PRESS` + `HOLD` at 600 ms |
+| External, P0.04 | P0.04 | `REMOVE_POINT` | `PRESS` only (FS §5.1: no `HOLD` action defined) |
 
-All four are `GPIO_PULL_UP | GPIO_ACTIVE_LOW` in the stock devicetree.
+All seven are `GPIO_PULL_UP | GPIO_ACTIVE_LOW` — the three external buttons rely on the SoC's internal pull (11-16 kΩ, 13 kΩ typical; nRF52840 Product Specification), same as the four built-in, so there is nothing electrically different between them, only which physical switch is on the other end.
 
-| DK LED | GPIO | Renders | Fidelity |
-|---|---|---|---|
-| LED 1 | P0.13 (**PWM**) | Haptic activity — waveform shape in time, amplitude as brightness | Proxy. §7.3 |
-| LED 2 | P0.14 | `LED_F1` mode from `DN_INDICATOR` | Mode only — `OFF`/`SOLID`. Colour not rendered |
-| LED 3 | P0.15 | `LED_F2` mode | Mode only |
-| LED 4 | P0.16 | `LED_LINK` — radio-up **AND** `DN_HOST` UP | **Full behaviour.** This is A15 and it is fully testable here |
+**All four indicators are real RGB via PWM**, not the mode-only mono LEDs this section originally described. `pwm0` stays haptic-only (`pwm_led0`, P0.13); three new instances (`pwm1`-`pwm3`) carry the 12 colour channels, wired common-anode (bench-confirmed by diode test) — anode to VDD, each cathode through its own resistor to a GPIO the PWM peripheral sinks.
 
-All four LEDs are active-low.
+| Indicator | R / G / B pins | PWM instance |
+|---|---|---|
+| `LED_F1` | P0.14 / P0.15 / P0.16 | `pwm1`, channels 0-2 |
+| `LED_F2` | P0.26 / P0.27 / P0.28 | `pwm2`, channels 0-2 |
+| `LED_LINK` | P0.29 / P0.30 / P0.31 | `pwm3`, channels 0-2 |
+| `LED_PWR` | P1.01 / P1.02 / P1.03 | channel 3 of `pwm1`/`pwm2`/`pwm3` respectively |
 
-**This differs from the plan's original DK indicator table (recorded historically at `HISTORY.md` §2.9, then `PLAN.md` §3.4), which put the haptic proxy on LED 4, and the reason is worth recording.** The stock DK devicetree puts only `led0` (P0.13) on a PWM channel — `pwm0_default` assigns `PWM_OUT0` to P0.13 and nothing else. Driving any other LED with PWM means extending the `pwm0` pinctrl in a board overlay. Since physical LED position carries no meaning on a development kit, the mapping is arbitrary and the one that needs no overlay is better: **one fewer thing that can be wrong, and one fewer file that diverges from upstream.** `PLAN.md` §5.6's table reflects the correction.
+`LED_PWR`'s three channels are parked one to a spare channel on each of the other three instances rather than claiming a fourth, and deliberately on the DK's near-radio-restricted `P1.0x` bank (Nordic docs: PWM is not low-frequency I/O) since `LED_PWR` isn't on the `DN_INDICATOR` colour-accuracy path validated first. This does not carry forward to the custom PCB, which has no such forced pin scarcity.
 
-Consequence: `led0`'s `gpio-leds` node is **not used**. The haptic proxy drives `pwm_led0`, and driving the same pin from both the GPIO and PWM drivers is a conflict that does not announce itself.
+`P0.14`-`P0.16` are the pins the original mono-LED table below used for `LED_F1`/`LED_F2`/`LED_LINK` — freed by this same change, since real RGB rendering replaces what they used to do.
+
+Every channel uses the same active-low PWM setup already proven on this board for the haptic proxy: `nordic,invert` on the pinctrl group, `PWM_POLARITY_INVERTED` on the `pwms` cell.
+
+### 2.1 Superseded: the M2 four-button/mono-LED table
+
+Kept for historical reference (what W1-W4 in §5's ladder actually ran against) — not the current wiring.
+
+The four buttons were mapped for **gesture and semantic coverage, not button coverage**: Button 1/P0.11 → `ADD_POINT` (`PRESS`), Button 2/P0.12 → `TOGGLE_CLOCK` (`PRESS`+`HOLD`), Button 3/P0.24 → `FORWARD` (`HOLD_REP`), Button 4/P0.25 → `F1` (inert vs no-op).
+
+The four LEDs: LED 1/P0.13 (PWM) was always the haptic proxy; LED 2/P0.14 and LED 3/P0.15 rendered `LED_F1`/`LED_F2` mode only, colour not rendered; LED 4/P0.16 rendered `LED_LINK` (radio-up **and** `DN_HOST` UP) with full behaviour, since that indicator needed no colour to prove A15.
+
+**This differed from the plan's original DK indicator table (recorded historically at `HISTORY.md` §2.9, then `PLAN.md` §3.4), which put the haptic proxy on LED 4, and the reason is worth keeping.** The stock DK devicetree puts only `led0` (P0.13) on a PWM channel — `pwm0_default` assigns `PWM_OUT0` to P0.13 and nothing else. Driving any other LED with PWM meant extending the `pwm0` pinctrl in a board overlay. Since physical LED position carries no meaning on a development kit, the mapping was arbitrary and the one that needed no overlay was better: **one fewer thing that can be wrong, and one fewer file that diverges from upstream.**
+
+Consequence, still true: `led0`'s `gpio-leds` node is **not used**. The haptic proxy drives `pwm_led0`, and driving the same pin from both the GPIO and PWM drivers is a conflict that does not announce itself.
 
 ---
 
@@ -72,7 +88,7 @@ Consequence: `led0`'s `gpio-leds` node is **not used**. The haptic proxy drives 
 | `src/link.c` | BLE peripheral, advertising, the RefRemote Link Service, uplink `CTR` | No |
 | `src/buttons.c` | Debounce and gesture classification | No |
 | `src/haptic.c` | Waveform table, `ttl` check, PWM rendering | No |
-| `src/indicators.c` | `LED_F1`, `LED_F2`, `LED_LINK` | No |
+| `src/indicators.c` | `LED_F1`, `LED_F2`, `LED_LINK`, `LED_PWR` | No |
 | `src/main.c` | Boot order, and the refusal path when unprovisioned | No |
 
 `common/` is shared with the dongle by CMake source reference, not by copying. **One codec, compiled into both firmwares and into the host suite** — that is the entire point of it being Zephyr-free, and a second copy would be a second thing to keep in step, which is the trap `PROTOCOL.md` already set once with a filesystem hard link.
@@ -206,15 +222,17 @@ One frame asserts the **complete app-owned indicator state**. Apply it whole. Th
 
 **Idempotent (A11):** a frame identical to the last one applied changes nothing visible and re-triggers nothing. Do not flash, pulse, or otherwise acknowledge receipt.
 
-`OFF` and `SOLID` only. There is exactly one blinking indicator in the whole system — `LED_PWR` below 10% — and it is remote-local and unreachable from this link.
+`OFF` and `SOLID` only — `DN_INDICATOR`'s field never carries a blink mode. There is no blinking indicator anywhere in the system any more: FS §10.1's earlier `LED_PWR`-below-10% blink state was retired along with the 4-band ladder it belonged to (§7.4 below).
 
 ### 7.2 `LED_LINK` is a conjunction, and this is the case most likely to be missed
 
 ```
-LED_LINK solid  ⟺  radio connection up  AND  last DN_HOST said UP
+LED_LINK green  ⟺  radio connection up  AND  last DN_HOST said UP
+LED_LINK yellow ⟺  radio connection up  AND  last DN_HOST said DOWN (or never yet told)
+LED_LINK red    ⟺  radio connection down
 ```
 
-The remote can see its radio connection. It **cannot** see the USB cable, the browser tab, the laptop's sleep state, or the application watchdog deliberately dropping the serial link — and every one of those leaves the radio connection perfectly healthy while the scoreboard is gone. A remote rendering `LED_LINK` from radio state alone shows solid to a referee whose presses are going nowhere, which is the exact failure the indicator exists to prevent.
+Three colours (FS §10.2), not the earlier binary off/blue-solid — always `SOLID`, never `OFF`. The remote can see its radio connection. It **cannot** see the USB cable, the browser tab, the laptop's sleep state, or the application watchdog deliberately dropping the serial link — and every one of those leaves the radio connection perfectly healthy while the scoreboard is gone. A remote rendering `LED_LINK` from radio state alone shows green to a referee whose presses are going nowhere, which is the exact failure the indicator exists to prevent.
 
 **On boot, assume `DOWN`** until told otherwise (A16). A remote powered on next to a dongle with no laptop attached must show link-lost, because that is what is true.
 
@@ -245,6 +263,12 @@ Link-lost also drives a **repeating double buzz** (FS §10.2), which on the DK i
 - **`ttl` check on receipt.** Discard a `TAP` that arrives more than `ttl` after the connection event in which it could first have been sent. **Where the determination cannot be made confidently, render.** The dongle's mechanism 1 carries the guarantee, and a remote guessing at deadlines it cannot measure would drop taps that were fine.
 
 `BEAT` is the only frame on this link that may be dropped. Never retried, never queued. **Burst suppression lives in the scoreboard** — nothing in the remote or the dongle suppresses anything, because nothing below the app knows a scoring burst is in progress.
+
+### 7.4 `DN_SIMSOC` — bench-only, and why it doesn't reopen §7.2's principle
+
+FS §10.1's `LED_PWR` ladder is now 3-band (0-33% red, 33-66% yellow, 66-100% green, no separate low-battery blink), and it renders from whatever `indicators_set_battery_pct()` was last told — driven by `DN_SIMSOC` (RADIO_PROTOCOL.md §7.5), not a real fuel-gauge reading. Defaults to a mid-green value (80) on boot, matching "default to the green range" until a real value exists.
+
+This looks like it contradicts RADIO_PROTOCOL.md §7.4's "the remote measures its own battery" principle (the same local-measurement reasoning §7.2 above applies to `LED_LINK`), and it deliberately doesn't: that principle assumes a real reading exists to be second-guessed. Before the nPM1300 stage (`PLAN.md` S17/S18), there is none — `DN_SIMSOC` fills a genuine void rather than competing with a real one, and it never touches `UP_TELEMETRY.battery_pct` (`link.c`'s `SYNTHETIC_BATTERY_PCT` stays exactly what it was, a fixed placeholder for the app's own display). Once a real fuel gauge exists, this frame either goes back to being what §7.4 forbids, or is retired — that decision belongs to whoever closes the nPM1300 milestone.
 
 ---
 

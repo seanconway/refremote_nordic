@@ -212,8 +212,9 @@ A firmware change that raises the MTU will not fail a test. It will lengthen the
 | `0x82` | `DN_INDICATOR` | 10 | Complete app-owned indicator state. Idempotent. | 7 |
 | `0x83` | `DN_CONFIG` | 4 | Haptic intensity and LED brightness, 0–100. | 7.3 |
 | `0x84` | `DN_HOST` | 3 | Whether the scoreboard half of the path is alive. | 9.2 |
+| `0x85` | `DN_SIMSOC` | 3 | Bench-only: simulated state of charge for `LED_PWR`. | 7.5 |
 
-Four and four. The mapping to `PROTOCOL.md` is one-to-one in the direction that matters:
+Four and five, `DN_SIMSOC` being the deliberate, documented exception to §7.4. The mapping to `PROTOCOL.md` is one-to-one in the direction that matters:
 
 | Wire message (WP) | Radio frame | Note |
 |---|---|---|
@@ -223,6 +224,7 @@ Four and four. The mapping to `PROTOCOL.md` is one-to-one in the direction that 
 | `STATE <remote> …` | `DN_INDICATOR` | Field-for-field |
 | `HAP <target> <waveform>` | `DN_HAPTIC` | One frame per target |
 | `CFG <target> <h> <b>` | `DN_CONFIG` | One frame per target |
+| `SIMSOC <target> <pct>` | `DN_SIMSOC` | One frame per target; bench-only, §7.5 |
 | `JOIN <remote>` | `UP_READY` | |
 | `LINK <remote> <state> <rssi> <batt>` | connection state + `UP_TELEMETRY` | §9 |
 | `ERR APP_TIMEOUT` (dongle-originated) | `DN_HOST DOWN` | §9.2 |
@@ -363,7 +365,7 @@ A press can arrive at the dongle while the scoreboard is absent: the app has not
 
 **The dongle drops it.** It does not queue it. A queued press applied minutes later is a wrong score with no visible cause, and it would arrive with no acknowledgement tap to warn the referee it had happened.
 
-The drop must be **counted** (`presses_dropped_no_host`) and reported in the first `LOG` line after the app returns. And the referee already knows, before pressing, because `DN_HOST DOWN` has put the remote into the link-lost rendering of FS §10.2 — `LED_LINK` off and the repeating double buzz. §9.2.
+The drop must be **counted** (`presses_dropped_no_host`) and reported in the first `LOG` line after the app returns. And the referee already knows, before pressing, because `DN_HOST DOWN` has put the remote into the link-lost rendering of FS §10.2 — `LED_LINK` yellow (radio still up, host down) and the repeating double buzz. §9.2.
 
 ---
 
@@ -419,6 +421,18 @@ A remote implementation that applies `haptic_scale` by scaling a single amplitud
 
 The remote measures its own battery and detects its own radio link state (FS §2.1). Giving the dongle a way to drive those indicators would create a second, slower, wrong opinion about facts the remote already holds. The one nuance is what "link" means, and §9.2 is about that.
 
+**`DN_SIMSOC` (§7.5) is a deliberate, temporary exception to the battery half of this rule, not a quiet reopening of it.** The principle above assumes the remote *has* an opinion to be overridden — a real fuel-gauge reading it would otherwise trust. Before the nPM1300 stage of the remote build-out, that opinion does not exist; there is nothing for `DN_SIMSOC` to compete with or slow-poke. It exists only to exercise `LED_PWR`'s rendering logic over the real wire path instead of a hardcoded test constant, and it never reaches `UP_TELEMETRY` (PROTOCOL.md §6.5) — so it cannot corrupt a real reading even by accident. Once a real fuel gauge exists, this frame either goes back to being exactly what §7.4 forbids, or is retired; that decision belongs to whoever closes the nPM1300 milestone, not to this document in advance.
+
+### 7.5 `DN_SIMSOC`
+
+```
+0: 0x85
+1: CTR
+2: pct   0-100, simulated state of charge
+```
+
+Applied on receipt; not persisted across a remote reboot. Not re-sent by the dongle on handshake — unlike `DN_CONFIG`, there is no "current value" the dongle is authoritative over here, since this is app-injected test state, not dongle-owned configuration.
+
 ---
 
 ## 8. Haptic delivery and the deadline rule
@@ -469,7 +483,7 @@ The wire protocol names three (WP §8). Adding the radio makes four, and the fou
 | Dongle watches app | Any received USB line | 2500 ms | `ERR APP_TIMEOUT`; **`DN_HOST DOWN` to both remotes** |
 | App watches dongle | Any received USB line | 2500 ms | Link stale, surfaced in the primary tier |
 | Dongle watches remote | LE supervision timeout | 1000 ms | Connection dropped; `LINK <remote> DISCONNECTED` after debounce (§9.4); reconnect |
-| **Remote watches dongle** | LE supervision timeout | 1000 ms | `LED_LINK` off, repeating double buzz (FS §10.2) |
+| **Remote watches dongle** | LE supervision timeout | 1000 ms | `LED_LINK` red, repeating double buzz (FS §10.2) |
 
 **Peripheral latency is zero on both connections and must stay zero.** Peripheral latency is the standard power lever for a BLE peripheral, and it is precisely the one this product cannot use: it permits the peripheral to skip up to *N* connection events, which delays every downlink frame — including the acknowledgement tap — by up to *N* intervals. R6 forbids it. Connection subrating has the same problem for the same reason and is not used in this revision. Power must be found elsewhere (§12.4).
 
@@ -483,12 +497,14 @@ The wire protocol names three (WP §8). Adding the radio makes four, and the fou
 
 FS §2.1 lists link status among the three things a remote holds locally. FS §10.2 defines the indication as **"connected end to end."** Those are consistent only if the remote is told about the half of the path it cannot see.
 
-The remote can observe its radio connection to the dongle. It cannot observe the USB cable, the browser tab, the laptop's sleep state, or an application watchdog deliberately dropping the serial link (FS §8.3) — and every one of those leaves the radio connection perfectly healthy while the scoreboard is gone. A remote rendering `LED_LINK` from radio state alone would show solid blue, with no buzz, to a referee whose presses were going nowhere. **That is the exact failure the indicator exists to prevent.**
+The remote can observe its radio connection to the dongle. It cannot observe the USB cable, the browser tab, the laptop's sleep state, or an application watchdog deliberately dropping the serial link (FS §8.3) — and every one of those leaves the radio connection perfectly healthy while the scoreboard is gone. A remote rendering `LED_LINK` from radio state alone would show solid green, with no buzz, to a referee whose presses were going nowhere. **That is the exact failure the indicator exists to prevent.**
 
 So:
 
 ```
-LED_LINK solid  ⟺  radio connection up  AND  last DN_HOST said UP
+LED_LINK green  ⟺  radio connection up  AND  last DN_HOST said UP
+LED_LINK yellow ⟺  radio connection up  AND  last DN_HOST said DOWN (or never yet told)
+LED_LINK red    ⟺  radio connection down
 ```
 
 The remote computes the conjunction. The radio half it detects; the host half it is told. It still holds no match state, and it still holds its own link state — the state simply has two inputs.
@@ -759,7 +775,7 @@ Both ends must handle these. Each has a failure mode that is silent, which is wh
 | A12 | Connection from a device with a valid address but no set key | Encryption fails; disconnected; counted. **No GATT access at any point** |
 | A13 | `RR_IDENTITY` reporting `set_serial` other than the dongle's | Disconnected; `ERR SET_MISMATCH` |
 | A14 | `RR_IDENTITY` reporting `radio_proto_major` ≠ 1 | Disconnected; `ERR REMOTE_PROTO_MISMATCH`; remote reported `DISCONNECTED` |
-| A15 | App supervision expires while both remotes are connected | Both remotes receive `DN_HOST DOWN`; both render `LED_LINK` off and the repeating double buzz, **while the radio connections stay up** |
+| A15 | App supervision expires while both remotes are connected | Both remotes receive `DN_HOST DOWN`; both render `LED_LINK` yellow and the repeating double buzz, **while the radio connections stay up** |
 | A16 | Remote powered on with no dongle present | Renders link-lost from boot. Does not render "connected" pending contact |
 | A17 | Remote leaves and re-enters range within 2 s | App sees `CONNECTING` then `CONNECTED`. **No `DISCONNECTED` line** (§9.4) |
 | A18 | Press made while out of range | No `EVT`, no tap. The gap appears in `radio_gap` on reconnection |

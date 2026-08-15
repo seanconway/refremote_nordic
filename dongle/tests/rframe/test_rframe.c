@@ -228,6 +228,41 @@ static void round_trip_dn_host(void)
 	CHECK(msg.dn_host.up == false, "up %d", msg.dn_host.up);
 }
 
+static void round_trip_dn_simsoc(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	struct rframe_msg msg;
+
+	int n = rframe_enc_dn_simsoc(buf, sizeof(buf), 4, 42);
+
+	CHECK(n == 3, "got %d", n);
+
+	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
+
+	CHECK(st == RFRAME_OK, "status %d", st);
+	CHECK(msg.type == RFRAME_DN_SIMSOC, "type %d", msg.type);
+	CHECK(msg.dn_simsoc.pct == 42u, "pct %d", msg.dn_simsoc.pct);
+}
+
+static void a_field_dn_simsoc_out_of_range_rejected(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN] = { RFRAME_DN_SIMSOC, 4, 101 };
+	struct rframe_msg msg;
+
+	enum rframe_decode_status st = rframe_decode(buf, 3, &msg);
+
+	CHECK(st == RFRAME_ERR_FIELD, "status %d", st);
+}
+
+static void dn_simsoc_enc_rejects_out_of_range(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+
+	int n = rframe_enc_dn_simsoc(buf, sizeof(buf), 4, 101);
+
+	CHECK(n == -1, "got %d", n);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Conformance cases                                                         */
 /* ------------------------------------------------------------------------ */
@@ -406,6 +441,9 @@ int main(void)
 		{ "DN_INDICATOR encode is idempotent (A11)", dn_indicator_encode_is_idempotent },
 		{ "round trip: DN_CONFIG",            round_trip_dn_config },
 		{ "round trip: DN_HOST",              round_trip_dn_host },
+		{ "round trip: DN_SIMSOC",            round_trip_dn_simsoc },
+		{ "A1: DN_SIMSOC out-of-range rejected", a_field_dn_simsoc_out_of_range_rejected },
+		{ "DN_SIMSOC encoder rejects out-of-range", dn_simsoc_enc_rejects_out_of_range },
 		{ "A1: unknown button rejected",      a1_unknown_button_rejected },
 		{ "A1: zero button rejected",         a1_zero_button_rejected },
 		{ "A1: unknown gesture rejected",     a1_unknown_gesture_rejected },

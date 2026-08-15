@@ -1,8 +1,18 @@
 /*
- * LED_F1, LED_F2, LED_LINK — remote/BUILD_SPEC.md §7.1, §7.2. Mode only:
- * this board's LEDs are single-colour, so the RGB fields of DN_INDICATOR are
- * accepted and stored but not rendered. Read them back over RTT if the
- * colour needs checking (§1's table).
+ * LED_F1, LED_F2, LED_LINK, LED_PWR — remote/BUILD_SPEC.md §7.1, §7.2, FS
+ * §10. Real RGB via PWM as of the M5 GPIO harness (PLAN.md S13/S14) — the
+ * DN_INDICATOR colour fields are now actually rendered, not just stored.
+ *
+ * LED_PWR renders FS §10.1's 3-band colour ladder from whatever
+ * indicators_set_battery_pct() was last told, driven by DN_SIMSOC
+ * (RADIO_PROTOCOL.md §7.5) rather than a real fuel-gauge reading — this
+ * board has no battery yet. DN_SIMSOC never touches UP_TELEMETRY
+ * (link.c's SYNTHETIC_BATTERY_PCT stays exactly what it was, a fixed
+ * placeholder for the app's own battery display), so the two synthetic
+ * values can't be confused for each other: one feeds a real wire path
+ * for testing this indicator, the other is a hardcoded constant nothing
+ * downstream should trust. Real content arrives with the nPM1300-EK
+ * (PLAN.md S17/S18).
  */
 #ifndef REMOTE_INDICATORS_H_
 #define REMOTE_INDICATORS_H_
@@ -20,12 +30,15 @@ struct k_work_q;
 int indicators_init(struct k_work_q *workq);
 
 /* DN_INDICATOR: complete app-owned state, asserted whole (§7.1). Applying an
- * identical frame must change nothing and re-trigger nothing (A11) — this is
- * naturally true here because the GPIO write is idempotent, not because of
- * any explicit comparison against the previous frame. */
+ * identical frame must change nothing and re-trigger nothing (A11) — true
+ * here because every PWM pulse write is idempotent, not because of any
+ * explicit comparison against the previous frame. */
 void indicators_set(enum proto_ind_mode f1_mode, const uint8_t f1_rgb[3],
 		    enum proto_ind_mode f2_mode, const uint8_t f2_rgb[3]);
 
+/* DN_CONFIG's led_brightness (0-100), applied multiplicatively to whatever
+ * colour is currently set on every rendered indicator — real PWM levels now
+ * that real RGB hardware exists, per the comment this replaces. */
 void indicators_set_brightness(uint8_t led_brightness);
 
 /*
@@ -33,9 +46,14 @@ void indicators_set_brightness(uint8_t led_brightness);
  * directly (§7.2): radio_up is what this board's own BLE connection state
  * says; host_up is DN_HOST, the half of the path the remote cannot see for
  * itself. On boot both default to false (A16) — link-lost until proven
- * otherwise, never "connected" pending contact.
+ * otherwise, never "connected" pending contact. Colour is fixed by FS §10.2
+ * (blue solid when up), not carried on the wire.
  */
 void indicators_set_radio_up(bool up);
 void indicators_set_host_up(bool up);
+
+/* DN_SIMSOC (RADIO_PROTOCOL.md §7.5): bench-only. Not real telemetry — see
+ * the header comment. Renders FS §10.1's 3-band ladder on LED_PWR. */
+void indicators_set_battery_pct(uint8_t pct);
 
 #endif /* REMOTE_INDICATORS_H_ */

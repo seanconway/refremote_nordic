@@ -919,6 +919,19 @@ void engine_on_line(char *line)
 		break;
 	}
 
+	case PROTO_SIMSOC: {
+		int first, last;
+
+		/* Bench-only (PROTOCOL.md §6.5): unlike cfgs[], no dongle-held
+		 * state to re-assert on JOIN — this is app-injected test state,
+		 * not dongle-owned configuration. */
+		target_bounds(msg.simsoc.target, &first, &last);
+		for (int r = first; r <= last; r++) {
+			(void)radio_send_simsoc((enum proto_remote)r, msg.simsoc.pct);
+		}
+		break;
+	}
+
 	case PROTO_HAP: {
 		int first, last;
 

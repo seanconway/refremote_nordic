@@ -12,14 +12,25 @@
 struct button_def {
 	const struct gpio_dt_spec spec;
 	enum proto_button button;
-	bool repeating;   /* HOLD_REP only for FORWARD/BACKWARD; only FORWARD exists here */
+	bool repeating;   /* HOLD_REP only for FORWARD/BACKWARD */
 };
 
+/*
+ * M5 GPIO harness (PLAN.md S13/S14): physical layout now mirrors the product
+ * button map instead of DK button order — the built-in four sit where
+ * FORWARD/BACKWARD/F1/F2 fall on the product remote, and the three bench-
+ * wired buttons (nrf52840dk_nrf52840.overlay, sw4..sw6) take the centre
+ * column. proto_button is what the reducer sees; which physical switch
+ * produces it is entirely a wiring choice below.
+ */
 static const struct button_def defs[] = {
-	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios), PROTO_BTN_ADD_POINT,    false },
-	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios), PROTO_BTN_TOGGLE_CLOCK, false },
-	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios), PROTO_BTN_FORWARD,      true  },
+	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios), PROTO_BTN_BACKWARD,     true  },
+	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw1), gpios), PROTO_BTN_FORWARD,      true  },
+	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw2), gpios), PROTO_BTN_F2,           false },
 	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw3), gpios), PROTO_BTN_F1,           false },
+	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw4), gpios), PROTO_BTN_ADD_POINT,    false },
+	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw5), gpios), PROTO_BTN_TOGGLE_CLOCK, false },
+	{ GPIO_DT_SPEC_GET(DT_ALIAS(sw6), gpios), PROTO_BTN_REMOVE_POINT, false },
 };
 
 #define BUTTON_COUNT (sizeof(defs) / sizeof(defs[0]))

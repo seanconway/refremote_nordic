@@ -142,6 +142,7 @@ enum proto_type {
 	PROTO_STATE,
 	PROTO_HAP,
 	PROTO_CFG,
+	PROTO_SIMSOC,
 	PROTO_PING,
 	PROTO_INFO,
 	PROTO_ECHO,
@@ -191,6 +192,12 @@ struct proto_msg {
 			uint8_t haptic;   /* 0-100 */
 			uint8_t bright;   /* 0-100 */
 		} cfg;
+
+		/* SIMSOC <target> <pct> — PROTOCOL.md §6.5. Bench-only. */
+		struct {
+			enum proto_target target;
+			uint8_t pct;      /* 0-100 */
+		} simsoc;
 
 		struct { uint32_t mode; } test;
 

@@ -84,7 +84,7 @@ Tactile discrimination is achieved through **button shape and position relative 
 
 The oversized circular centre button is the tactile datum. From it the referee resolves the remaining six by direction and by the circular-versus-elliptical distinction.
 
-**Accidental actuation.** All buttons are slightly recessed. Every clearing, resetting and decrementing action requires a hold rather than a press.
+**Accidental actuation.** All buttons are slightly recessed. Every clearing and resetting action requires a hold rather than a press.
 
 ### 3.2 LED Layout
 
@@ -229,7 +229,7 @@ Riding time and the freestyle activity clock are one mechanism with opposite pol
 
 - Exactly one athlete owns the clock at a time, or neither. **Ownership is held by the scoreboard**, not the remote.
 - Ownership is assigned by pressing F1 on that athlete's remote, transferred by pressing F1 on the other, deassigned by pressing F1 again on the owning athlete's remote, and the accumulated value reset by holding F1.
-- **`LED_F1` on the owning athlete's remote is lit whenever that athlete owns the clock**, accruing or paused. Ownership is the question the LED answers.
+- **`LED_F1` on both remotes is lit, in the owning athlete's colour, whenever that athlete owns the clock**, accruing or paused; off on both when unowned (§10.3). Ownership is the question the LED answers, and either wrist answers it.
 - **The per-second heartbeat fires only while the clock is actually accruing.** Its presence or absence tells the referee whether the clock is running; the LED is not asked to carry that distinction.
 - The clock pauses automatically whenever the main match clock stops, and resumes when it restarts. Ownership is retained across the pause.
 - The system never awards the resulting point.
@@ -445,33 +445,36 @@ The exact use of the flag is at the referee's discretion.
 
 | State of charge | Indication |
 |---|---|
-| 100–66% | Green |
-| 66–33% | Yellow |
-| 33–10% | Red |
-| <10% | Red fast blink |
+| 66–100% | Green |
+| 33–66% | Yellow |
+| 0–33% | Red |
 
-Charging state is also reflected here.
+Three bands, no separate low-battery blink state — a referee glances at colour, not a blink rate. `LED_PWR` is always solid; there is no `OFF` state for it, since a battery reading always has some value. Charging state is also reflected here.
 
 ### 10.2 Link — `LED_LINK`
 
 | State | Indication |
 |---|---|
-| Disconnected | Off |
-| Connected end to end | Blue solid |
-| Lost | Off, plus repeating double buzz until restored |
+| Not connected to dongle | Red solid |
+| Connected to dongle, dongle not connected to scoreboard | Yellow solid |
+| Connected to dongle and dongle connected to scoreboard | Green solid |
+
+Always solid — no `OFF` state. The repeating double buzz (§11: "Link lost") still fires whenever the indicator is not green — red or yellow both count as lost for the buzz's purposes — unchanged from the two-state version this replaces.
 
 ### 10.3 Function Indicators — `LED_F1`, `LED_F2`
 
 | Shape | Rendering |
 |---|---|
-| Secondary clock | Lit whenever this athlete owns the clock, accruing or paused; off otherwise. Running state is carried by the heartbeat, not the LED |
-| Counter | Off at zero; solid when non-zero |
-| Tri-state flag | Lit when this athlete holds the flag; off otherwise |
+| Secondary clock | Lit on **both remotes** whenever an athlete owns the clock, in that athlete's colour (athlete red or athlete green); off on both when unowned. Running state is carried by the heartbeat, not the LED |
+| Counter | Off at zero; solid in the role's configured colour when non-zero. This remote's own count only — no cross-remote rendering |
+| Tri-state flag | Lit on **both remotes** in the holding athlete's colour when held; off on both when unowned |
 | Inert | Always off |
 
 Counter rendering is deliberately binary. The exact count is on the scoreboard, and a referee mid-match is looking at the mat rather than their wrist. The wrist LEDs answer only: *does this athlete currently hold this state?*
 
-Colour per role is defined in ruleset configuration (§12.2), so a referee can distinguish a clock indicator from a counter or flag without recalling which ruleset is loaded.
+**Secondary clock and tri-state flag render on both wrists identically, in the holder's athlete colour — not the per-role colour.** A referee glancing at either wrist sees the same thing: who currently holds this state, by the same red/green they already use to identify corners everywhere else. This replaces the earlier "each remote shows only its own athlete's ownership" behaviour — a referee previously had to check the *other* wrist to learn who held a contested state; now either wrist answers it.
+
+**Counter is the one shape colour-per-role (§12.2) still governs.** It has no cross-remote holder — each remote tracks its own athlete's count independently — so there is nothing for an athlete colour to represent, and the ruleset-configured role colour (distinguishing, say, a caution counter from an advantage counter) is still what a referee needs there.
 
 ---
 
@@ -557,6 +560,8 @@ ruleset:
   counters:           [ {id, ladder_steps, display_only: true} ]
   tiebreak_criteria:  [ ordered list, display_only: true ]
 ```
+
+**`f1.led_colour`/`f2.led_colour` are read only when that slot's `role` is `COUNTER`** (§10.3) — a secondary clock or tri-state flag renders in the holding athlete's colour instead, on both remotes, regardless of what `led_colour` is set to. The field stays in the schema for the counter case rather than being made conditional on role at the schema level, since a ruleset can still reassign a slot's role.
 
 **Secondary-clock behaviour is declared per period**, not per ruleset. This is what allows the NCAA riding-time rules to be expressed as data: the clock runs in all regulation periods with a one-minute threshold and accumulation carrying between them, resets on entry to overtime, then runs again through the overtime periods with a one-second threshold and a different consequence. Because these rules have changed across rules cycles, encoding them as configuration means a rules change is a settings edit rather than a code change.
 

@@ -1,0 +1,178 @@
+/*
+ * The three buttons remote/BUILD_SPEC.md §2 always deferred to real GPIO
+ * (originally REMOVE_POINT/BACKWARD/F2; the M5 harness reassigns which
+ * physical button carries which PROTO_BTN_* — see buttons.c). Bench-wired
+ * per PLAN.md S13/S14: P0.02/P0.03/P0.04, external momentary switch to GND,
+ * relying on the SoC's internal pull — same GPIO_ACTIVE_LOW | GPIO_PULL_UP
+ * convention the stock DK buttons already use, so there is nothing different
+ * about these three at the devicetree level, only at the wiring level.
+ *
+ * A second, separate "gpio-keys" node rather than extending the board's own
+ * /buttons: that node has no label to reference from an overlay, and
+ * buttons.c reads these through DT_ALIAS() + GPIO_DT_SPEC_GET() directly, so
+ * nothing requires the extra buttons to live in the same node as button0..3.
+ */
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	remote_ext_buttons: remote-ext-buttons {
+		compatible = "gpio-keys";
+
+		ext_button_0: ext_button_0 {
+			gpios = <&gpio0 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			label = "External button, P0.02";
+		};
+
+		ext_button_1: ext_button_1 {
+			gpios = <&gpio0 3 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			label = "External button, P0.03";
+		};
+
+		ext_button_2: ext_button_2 {
+			gpios = <&gpio0 4 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+			label = "External button, P0.04";
+		};
+	};
+
+	/*
+	 * Real RGB indicators (PLAN.md S13/S14), replacing the mode-only mono
+	 * LEDs indicators.c used since M2. Wiring throughout is common anode
+	 * (bench-confirmed by diode test) — anode to VDD off-board, each
+	 * cathode through its own series resistor to a GPIO the GPIO sinks —
+	 * so every channel here needs the same active-low PWM setup Nordic's
+	 * own board file already uses for pwm_led0 on P0.13: `nordic,invert`
+	 * on the pinctrl group *and* PWM_POLARITY_INVERTED on the pwms cell.
+	 * That combination is already proven on this exact board (haptic.c's
+	 * proxy), so it is copied rather than re-derived.
+	 *
+	 * One indicator's three channels do not share a PWM instance — PWM1/2/3
+	 * each carry one full RGB indicator on channels 0-2, with channel 3
+	 * spare. LED_PWR's three channels are parked one to a spare channel
+	 * on each instance instead of claiming a fourth PWM peripheral. Pin
+	 * choice matches the reasoning already given: P0.14-16 free up because
+	 * this replaces what they used to render; P0.26-31 were never claimed;
+	 * P1.01-03 are the DK's near-radio-restricted bank (Nordic docs: PWM is
+	 * not low-frequency I/O), parked on LED_PWR since it's not on the
+	 * DN_INDICATOR colour-accuracy path being validated first.
+	 */
+	rgb_leds: rgb-leds {
+		compatible = "pwm-leds";
+
+		led_f1_r: led_f1_r { pwms = <&pwm1 0 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_f1_g: led_f1_g { pwms = <&pwm1 1 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_f1_b: led_f1_b { pwms = <&pwm1 2 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+
+		led_f2_r: led_f2_r { pwms = <&pwm2 0 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_f2_g: led_f2_g { pwms = <&pwm2 1 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_f2_b: led_f2_b { pwms = <&pwm2 2 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+
+		led_link_r: led_link_r { pwms = <&pwm3 0 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_link_g: led_link_g { pwms = <&pwm3 1 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_link_b: led_link_b { pwms = <&pwm3 2 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+
+		led_pwr_r: led_pwr_r { pwms = <&pwm1 3 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_pwr_g: led_pwr_g { pwms = <&pwm2 3 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+		led_pwr_b: led_pwr_b { pwms = <&pwm3 3 PWM_MSEC(20) PWM_POLARITY_INVERTED>; };
+	};
+
+	aliases {
+		sw4 = &ext_button_0;
+		sw5 = &ext_button_1;
+		sw6 = &ext_button_2;
+
+		f1r = &led_f1_r;
+		f1g = &led_f1_g;
+		f1b = &led_f1_b;
+		f2r = &led_f2_r;
+		f2g = &led_f2_g;
+		f2b = &led_f2_b;
+		linkr = &led_link_r;
+		linkg = &led_link_g;
+		linkb = &led_link_b;
+		pwrr = &led_pwr_r;
+		pwrg = &led_pwr_g;
+		pwrb = &led_pwr_b;
+	};
+};
+
+&pinctrl {
+	pwm1_default: pwm1_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 14)>,
+				<NRF_PSEL(PWM_OUT1, 0, 15)>,
+				<NRF_PSEL(PWM_OUT2, 0, 16)>,
+				<NRF_PSEL(PWM_OUT3, 1, 1)>;
+			nordic,invert;
+		};
+	};
+	pwm1_sleep: pwm1_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 14)>,
+				<NRF_PSEL(PWM_OUT1, 0, 15)>,
+				<NRF_PSEL(PWM_OUT2, 0, 16)>,
+				<NRF_PSEL(PWM_OUT3, 1, 1)>;
+			low-power-enable;
+		};
+	};
+
+	pwm2_default: pwm2_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 26)>,
+				<NRF_PSEL(PWM_OUT1, 0, 27)>,
+				<NRF_PSEL(PWM_OUT2, 0, 28)>,
+				<NRF_PSEL(PWM_OUT3, 1, 2)>;
+			nordic,invert;
+		};
+	};
+	pwm2_sleep: pwm2_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 26)>,
+				<NRF_PSEL(PWM_OUT1, 0, 27)>,
+				<NRF_PSEL(PWM_OUT2, 0, 28)>,
+				<NRF_PSEL(PWM_OUT3, 1, 2)>;
+			low-power-enable;
+		};
+	};
+
+	pwm3_default: pwm3_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 29)>,
+				<NRF_PSEL(PWM_OUT1, 0, 30)>,
+				<NRF_PSEL(PWM_OUT2, 0, 31)>,
+				<NRF_PSEL(PWM_OUT3, 1, 3)>;
+			nordic,invert;
+		};
+	};
+	pwm3_sleep: pwm3_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 29)>,
+				<NRF_PSEL(PWM_OUT1, 0, 30)>,
+				<NRF_PSEL(PWM_OUT2, 0, 31)>,
+				<NRF_PSEL(PWM_OUT3, 1, 3)>;
+			low-power-enable;
+		};
+	};
+};
+
+&pwm1 {
+	status = "okay";
+	pinctrl-0 = <&pwm1_default>;
+	pinctrl-1 = <&pwm1_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&pwm2 {
+	status = "okay";
+	pinctrl-0 = <&pwm2_default>;
+	pinctrl-1 = <&pwm2_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&pwm3 {
+	status = "okay";
+	pinctrl-0 = <&pwm3_default>;
+	pinctrl-1 = <&pwm3_sleep>;
+	pinctrl-names = "default", "sleep";
+};

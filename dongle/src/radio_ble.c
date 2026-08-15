@@ -1216,6 +1216,28 @@ int radio_send_config(enum proto_remote r, uint8_t haptic, uint8_t bright)
 					      (uint16_t)n, false);
 }
 
+int radio_send_simsoc(enum proto_remote r, uint8_t pct)
+{
+	struct remote_state *rs;
+	uint8_t buf[RFRAME_MAX_LEN];
+	int n;
+
+	if (r >= PROTO_REMOTE_COUNT) {
+		return -1;
+	}
+	rs = &remotes[r];
+	if (rs->phase != PHASE_READY) {
+		return -1;
+	}
+
+	n = rframe_enc_dn_simsoc(buf, sizeof(buf), 0, pct);
+	if (n < 0) {
+		return -1;
+	}
+	return bt_gatt_write_without_response(rs->conn, rs->downlink_handle, buf,
+					      (uint16_t)n, false);
+}
+
 int radio_send_host(enum proto_remote r, bool up)
 {
 	struct remote_state *rs;

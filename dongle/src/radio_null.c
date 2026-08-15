@@ -82,6 +82,19 @@ int radio_send_config(enum proto_remote r, uint8_t haptic, uint8_t bright)
 	return 0;
 }
 
+int radio_send_simsoc(enum proto_remote r, uint8_t pct)
+{
+	/*
+	 * Nothing to apply, same reasoning as radio_send_config() above:
+	 * there is no LED_PWR on this board's two-GPIO indicator stand-in for
+	 * a simulated value to drive, and a stand-in that pretended to render
+	 * it would be the FAKE_LINK mistake again.
+	 */
+	ARG_UNUSED(r);
+	ARG_UNUSED(pct);
+	return 0;
+}
+
 int radio_send_host(enum proto_remote r, bool up)
 {
 	/*

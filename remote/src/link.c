@@ -208,6 +208,9 @@ static void handle_downlink_write(const uint8_t *data, uint16_t length)
 	case RFRAME_DN_HOST:
 		indicators_set_host_up(msg.dn_host.up);
 		break;
+	case RFRAME_DN_SIMSOC:
+		indicators_set_battery_pct(msg.dn_simsoc.pct);
+		break;
 	default:
 		break;
 	}

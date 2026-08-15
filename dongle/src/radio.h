@@ -117,6 +117,7 @@ int radio_send_haptic(enum proto_remote r, enum proto_waveform w,
 		      uint8_t ttl_4ms);
 int radio_send_indicator(enum proto_remote r, const struct indicator_state *s);
 int radio_send_config(enum proto_remote r, uint8_t haptic, uint8_t bright);
+int radio_send_simsoc(enum proto_remote r, uint8_t pct);
 
 /* DN_HOST carries the half of the path the remote cannot see: the USB cable,
  * the browser tab, the laptop's sleep state, the app's own watchdog. */

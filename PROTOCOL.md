@@ -98,12 +98,13 @@ Accumulate bytes into a line buffer until `\n`. Then strip any trailing `\r`, sp
 | `STATE` | `<remote> <f1> <f1rgb> <f2> <f2rgb>` | Complete app-owned indicator state for one remote. Idempotent. | 6 |
 | `HAP` | `<target> <waveform>` | Render one haptic waveform. | 9 |
 | `CFG` | `<target> <haptic> <bright>` | Haptic intensity and LED brightness, 0–100. | 6.4 |
+| `SIMSOC` | `<target> <pct>` | Bench-only: simulated `LED_PWR` state of charge. | 6.5 |
 | `PING` | — | Liveness. Dongle replies `PONG`. | 8 |
 | `INFO` | — | Dongle replies `HELLO`, then `LINK` per remote. | 4.1 |
 | `ECHO` | `<text>` | Dongle replies `ECHO <text>`. | 10 |
 | `TEST` | `<mode>` | Self-test. | 10.2 |
 
-Eight and eight. Every officiating concept in the functional specification — points, periods, riding time, advantages, cautions, phases, criteria, the pending-choice flag — is expressible over these sixteen messages without any of them naming it.
+Eight and nine, `SIMSOC` being the one bench-only exception to the otherwise-symmetric count. Every officiating concept in the functional specification — points, periods, riding time, advantages, cautions, phases, criteria, the pending-choice flag — is expressible over these sixteen messages without any of them naming it.
 
 ---
 
@@ -276,6 +277,21 @@ CFG BOTH 80 60
 Both are global scale factors, not per-waveform or per-indicator settings. **They cannot compress the amplitude separation of §9.1**, which is a firmware property of the waveforms themselves. `CFG BOTH 20 …` makes everything quieter; it does not make a heartbeat feel like an acknowledgement. That distinction is load-bearing for the scoring interface (FS §11.1) and is not exposed to configuration.
 
 Applied on receipt, persisted by the dongle until reboot, re-sent by the app on every handshake.
+
+### 6.5 `SIMSOC` — simulated state of charge
+
+```
+SIMSOC RED 42
+```
+
+| Arg | Values |
+|---|---|
+| `<target>` | `RED` \| `GREEN` \| `BOTH` |
+| `<pct>` | 0–100 |
+
+Bench-only. No fuel gauge exists before the nPM1300 stage of the remote build-out, so `LED_PWR` (FS §10.1) has nothing real to render from. `SIMSOC` sets a value on the targeted remote(s) purely for exercising the `LED_PWR` colour ladder end to end over the real wire path, rather than testing the rendering logic against a hardcoded constant.
+
+**`SIMSOC` never feeds `UP_TELEMETRY.battery_pct`.** It is one-directional, app → remote, and affects only `LED_PWR`'s local rendering. A remote that echoed an operator-injected test value back as if it were a real telemetry reading would be exactly the trap `CLAUDE.md` already retired once (`CONFIG_DONGLE_FAKE_LINK`) — a signal that looks real and is not. Not persisted across a remote reboot; defaults to a mid-green value until set.
 
 ---
 
@@ -517,6 +533,7 @@ Both parsers must handle these without crashing, and must correctly parse the ne
 | T14 | `LINK RED CONNECTED\n` (no rssi) | Ignored, logged — §7 makes rssi mandatory |
 | T15 | `HAP BOTH SPIN\n` (unknown waveform) | Ignored, logged |
 | T16 | `EVT` with the same `seq` twice | Applied once; the duplicate is dropped and counted |
+| T17 | `SIMSOC RED 150\n` (out-of-range pct) | Ignored, logged |
 
 T3, T4 and T5 are the ones that matter for framing. T7 is the v2.0-compatibility case and must fail closed: a v2.0 dongle talking to a v3.0 app is refused at the `HELLO` version check long before this, but a partially-updated firmware would present exactly this line and must never be interpreted as a gestureless press.
 

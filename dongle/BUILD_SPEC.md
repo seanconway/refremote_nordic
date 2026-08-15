@@ -103,6 +103,7 @@ int  radio_send_haptic   (enum proto_remote, enum proto_waveform, uint8_t ttl_4m
 int  radio_send_indicator(enum proto_remote, const struct indicator_state *);
 int  radio_send_config   (enum proto_remote, uint8_t haptic, uint8_t bright);
 int  radio_send_host     (enum proto_remote, bool up);
+int  radio_send_simsoc   (enum proto_remote, uint8_t pct);
 
 /* True once the remote is fully established per RP §9.4 — encrypted,
  * identity validated, CCCD subscribed. Not merely "connected". */
@@ -241,6 +242,8 @@ Both carry `<target>` ∈ {`RED`, `GREEN`, `BOTH`}, which the existing remote-na
 `CFG` is applied on receipt and **persisted until reboot**, and re-sent to any remote that connects (RP §7.3). That is transport state, not match state, so holding it does not violate §5.5 — the distinction is that `CFG` has no scoreboard-side counterpart that could diverge, whereas indicator state does.
 
 `HAP <target> <waveform>` maps to `DN_HAPTIC`. An unknown waveform invalidates the line (T15).
+
+`SIMSOC <target> <pct>` (PROTOCOL.md §6.5) follows the same `BOTH`-expansion shape as `CFG`/`HAP`, via `radio_send_simsoc()`. **Unlike `CFG`, the dongle holds nothing for it** — no `cfgs[]`-style persistence, no re-send on a remote's `JOIN`. It's app-injected bench-only test state, not dongle-owned configuration; there is no "current value" the dongle would be authoritative over between sends.
 
 ### 5.7 `ECHO`, and a known divergence from the emulator
 

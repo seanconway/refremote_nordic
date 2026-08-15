@@ -447,6 +447,21 @@ static void cfg_parsed(void)
 	CHECK(argc.type == PROTO_INVALID, "CFG needs exactly 3 arguments");
 }
 
+static void simsoc_parsed(void)
+{
+	struct proto_msg m, hi, argc;
+
+	PARSE(m, "SIMSOC RED 42");
+	CHECK(m.type == PROTO_SIMSOC && m.simsoc.target == PROTO_TGT_RED &&
+	      m.simsoc.pct == 42u, "SIMSOC RED 42");
+
+	PARSE(hi, "SIMSOC GREEN 101");
+	CHECK(hi.type == PROTO_INVALID, "SIMSOC pct is 0-100");
+
+	PARSE(argc, "SIMSOC BOTH");
+	CHECK(argc.type == PROTO_INVALID, "SIMSOC needs exactly 2 arguments");
+}
+
 static void simple_messages(void)
 {
 	struct proto_msg ping, ping_args, info, test3, test_bad, join;
@@ -654,6 +669,7 @@ int main(void)
 		{ "T16 parser is stateless",     t16_parser_is_stateless },
 		{ "ACK and SILENT",              ack_and_silent },
 		{ "CFG parsed",                  cfg_parsed },
+		{ "SIMSOC parsed",               simsoc_parsed },
 		{ "simple messages",             simple_messages },
 		{ "v2.0 keywords are unknown",   v2_keywords_are_unknown },
 		{ "ECHO is verbatim",            echo_is_verbatim },

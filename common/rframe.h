@@ -55,6 +55,7 @@ enum rframe_type {
 	RFRAME_DN_INDICATOR = 0x82,
 	RFRAME_DN_CONFIG    = 0x83,
 	RFRAME_DN_HOST      = 0x84,
+	RFRAME_DN_SIMSOC    = 0x85,
 };
 
 /* RP §7.2 byte 3. */
@@ -135,6 +136,8 @@ struct rframe_msg {
 		} dn_config;
 
 		struct { bool up; } dn_host;
+
+		struct { uint8_t pct; } dn_simsoc; /* RP §7.5: bench-only, 0-100 */
 	};
 };
 
@@ -171,6 +174,7 @@ int rframe_enc_dn_indicator(uint8_t *out, size_t cap, uint8_t ctr,
 int rframe_enc_dn_config(uint8_t *out, size_t cap, uint8_t ctr,
 			 uint8_t haptic_scale, uint8_t led_brightness);
 int rframe_enc_dn_host(uint8_t *out, size_t cap, uint8_t ctr, bool up);
+int rframe_enc_dn_simsoc(uint8_t *out, size_t cap, uint8_t ctr, uint8_t pct);
 
 /* ------------------------------------------------------------------------ */
 /* CTR arithmetic — RP §4.2, §6.1 step 3                                     */

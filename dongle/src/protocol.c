@@ -449,6 +449,31 @@ static void parse_cfg(char *rest, struct proto_msg *out)
 	out->cfg.bright = bright;
 }
 
+/* SIMSOC <target> <pct> — §6.5. Bench-only simulated LED_PWR state of charge. */
+static void parse_simsoc(char *rest, struct proto_msg *out)
+{
+	char *tok[PROTO_MAX_TOKENS];
+	uint32_t target;
+	uint8_t pct;
+
+	if (split_tokens(rest, tok, PROTO_MAX_TOKENS) != 2u) {
+		invalid(out, "wrong arg count");
+		return;
+	}
+	if (!lookup_name(target_names, PROTO_TGT_COUNT, tok[0], &target)) {
+		invalid(out, "bad target");
+		return;
+	}
+	if (!parse_pct(tok[1], &pct)) {
+		invalid(out, "bad pct");
+		return;
+	}
+
+	out->type = PROTO_SIMSOC;
+	out->simsoc.target = (enum proto_target)target;
+	out->simsoc.pct = pct;
+}
+
 static void parse_test(char *rest, struct proto_msg *out)
 {
 	char *tok[PROTO_MAX_TOKENS];
@@ -695,6 +720,8 @@ void proto_parse(char *line, struct proto_msg *out)
 		parse_hap(args, out);
 	} else if (strcmp(kw, "CFG") == 0) {
 		parse_cfg(args, out);
+	} else if (strcmp(kw, "SIMSOC") == 0) {
+		parse_simsoc(args, out);
 	} else if (strcmp(kw, "PING") == 0) {
 		parse_no_args(args, out, PROTO_PING);
 	} else if (strcmp(kw, "INFO") == 0) {
