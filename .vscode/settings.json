@@ -1,6 +1,8 @@
 {
     "nrf-connect.applications": [
         "${workspaceFolder}\\dongle",
-        "${workspaceFolder}\\cdc_acm"
+        "${workspaceFolder}\\cdc_acm",
+        "${workspaceFolder}\\remote",
+        "${workspaceFolder}\\remote_dummy"
     ]
 }
