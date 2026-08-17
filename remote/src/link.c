@@ -61,6 +61,12 @@
 #define SYNTHETIC_BATTERY_PCT 42u
 #define TELEMETRY_INTERVAL_MS 10000u
 
+/* How long to wait before retrying a failed bt_le_adv_start() (below). No
+ * spec value exists for this — it is not on RP §9.5's table, which assumes
+ * the call succeeds. Short relative to the dongle's own unbounded retry of
+ * bt_conn_le_create() (radio_ble.c, 500 ms), for the same reason. */
+#define ADV_RETRY_MS 500u
+
 static const struct bt_uuid_128 uuid_service  = BT_UUID_INIT_128(RR_UUID_SERVICE);
 static const struct bt_uuid_128 uuid_identity = BT_UUID_INIT_128(RR_UUID_IDENTITY);
 static const struct bt_uuid_128 uuid_uplink   = BT_UUID_INIT_128(RR_UUID_UPLINK);
@@ -75,6 +81,7 @@ static struct bt_nrf_ltk set_ltk;
 static bt_addr_le_t dongle_addr;
 static struct k_work_q *link_workq;
 static struct k_work_delayable telemetry_work;
+static struct k_work_delayable adv_retry_work;
 
 /* ------------------------------------------------------------------------ */
 /* BT-thread -> link_workq event marshaling                                  */
@@ -343,6 +350,14 @@ static void handle_connected(struct bt_conn *conn, uint8_t err)
 	active_conn = bt_conn_ref(conn);
 	uplink_subscribed = false;
 
+	/* A connection only forms once advertising has actually succeeded, so
+	 * any retry still pending from a stale failed attempt is moot now —
+	 * and since start_advertising() unconditionally stops/restarts the
+	 * advertiser, letting a stale retry fire while this connection is
+	 * live would tear down the very advertiser state a live connection
+	 * no longer needs and should not be disturbing. */
+	(void)k_work_cancel_delayable(&adv_retry_work);
+
 	/*
 	 * BUILD_SPEC §7.1/RP §10.3: the LTK is installed here but security is
 	 * never raised from this side. "Peripherals should wait for the
@@ -456,14 +471,35 @@ static void link_evt_work_handler(struct k_work *work)
  * not an oversight. It trades a faster reconnect for one less state machine;
  * nothing about W1-W5 depends on reconnect speed specifically.
  */
+static void adv_retry_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	start_advertising();
+}
+
+/*
+ * link_init() calls this once, cold, against a just-enabled BT host — that
+ * call is not the one that fails. handle_disconnected() calls it warm, right
+ * on top of a connection the controller just tore down (observed on hardware
+ * specifically for the case where the *central* vanished — dongle power
+ * loss — rather than this board rebooting): bt_le_adv_start() can come back
+ * with an error there, and previously that error was discarded, leaving the
+ * radio silently unadvertising until this board was itself power-cycled.
+ * There is no LOG channel on this board (file header) to have surfaced that
+ * any other way. Retry instead of trusting the first attempt.
+ */
 static void start_advertising(void)
 {
 	static const struct bt_le_adv_param adv_param = BT_LE_ADV_PARAM_INIT(
 		BT_LE_ADV_OPT_CONN | BT_LE_ADV_OPT_FILTER_CONN,
 		160 /* 100 ms, 0.625 ms units */, 160, NULL);
+	int err;
 
 	(void)bt_le_adv_stop();
-	(void)bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
+	err = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
+	if (err) {
+		k_work_reschedule_for_queue(link_workq, &adv_retry_work, K_MSEC(ADV_RETRY_MS));
+	}
 }
 
 /* ------------------------------------------------------------------------ */
@@ -522,6 +558,7 @@ int link_init(const struct provisioning_record *prov, struct k_work_q *workq)
 	}
 
 	k_work_init_delayable(&telemetry_work, telemetry_handler);
+	k_work_init_delayable(&adv_retry_work, adv_retry_handler);
 
 	start_advertising();
 	return 0;
