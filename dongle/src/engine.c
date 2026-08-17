@@ -161,6 +161,22 @@ static void send_link(enum proto_remote r)
 	}
 }
 
+/* §16, bench-only — relays a remote's UP_FACTORY_STATUS as a FACSTATUS
+ * line, unconditionally, the same "no dongle-side cache" reasoning as
+ * PROTO_STATE below: this is a one-shot bench command's reply, not
+ * ongoing state to suppress duplicates of. */
+static void send_facstatus(enum proto_remote r, enum proto_factory_state state,
+			   uint8_t detail, bool diag_pass, uint16_t vdd_mv,
+			   uint8_t a_cal_comp, uint8_t a_cal_bemf, uint8_t feedback_control)
+{
+	char buf[PROTO_MAX_LINE];
+
+	if (proto_enc_facstatus(buf, sizeof(buf), r, state, detail, diag_pass, vdd_mv,
+				a_cal_comp, a_cal_bemf, feedback_control) > 0) {
+		(void)usb_link_send(buf);
+	}
+}
+
 static void send_log(const char *text)
 {
 	char buf[PROTO_MAX_LINE];
@@ -536,15 +552,32 @@ static void on_radio_fault(enum proto_remote src, const char *code)
 	send_err(code);
 }
 
+/* §16, bench-only. Just a relay — the engine holds no factory-command
+ * state of its own beyond what radio_send_cal_trigger()/radio_send_otp_
+ * burn() already track (rs->phase == PHASE_READY), same as every other
+ * downlink send in this file. */
+static void on_radio_factory_status(enum proto_remote src, enum proto_factory_state state,
+				    uint8_t detail, bool diag_pass, uint16_t vdd_mv,
+				    uint8_t a_cal_comp, uint8_t a_cal_bemf,
+				    uint8_t feedback_control)
+{
+	if (!valid_remote(src)) {
+		return;
+	}
+	send_facstatus(src, state, detail, diag_pass, vdd_mv, a_cal_comp, a_cal_bemf,
+		       feedback_control);
+}
+
 static const struct radio_cb radio_callbacks = {
-	.on_input     = on_radio_input,
-	.on_ready     = on_radio_ready,
-	.on_link      = on_radio_link,
-	.on_telemetry = on_radio_telemetry,
-	.on_gap       = on_radio_gap,
-	.on_dup       = on_radio_dup,
-	.on_diag      = on_radio_diag,
-	.on_fault     = on_radio_fault,
+	.on_input          = on_radio_input,
+	.on_ready          = on_radio_ready,
+	.on_link           = on_radio_link,
+	.on_telemetry      = on_radio_telemetry,
+	.on_gap            = on_radio_gap,
+	.on_dup            = on_radio_dup,
+	.on_diag           = on_radio_diag,
+	.on_fault          = on_radio_fault,
+	.on_factory_status = on_radio_factory_status,
 };
 
 /* ------------------------------------------------------------------------ */
@@ -956,6 +989,23 @@ void engine_on_line(char *line)
 
 	case PROTO_TEST:
 		handle_test(msg.test.mode);
+		break;
+
+	/*
+	 * §16, bench-only. A negative return from either send is a normal
+	 * outcome (radio.h: "not sent", same reasoning as radio_send_haptic)
+	 * and produces no reply — the bench tool's own timeout is what tells
+	 * it the command did not land, same as any other dropped downlink on
+	 * this wire. Nothing here needs a LOG line: an unreachable remote
+	 * during a factory session is the technician's problem to notice,
+	 * not a fault this firmware diagnoses.
+	 */
+	case PROTO_FACAL:
+		(void)radio_send_cal_trigger(msg.factory_cmd.remote);
+		break;
+
+	case PROTO_FACOTP:
+		(void)radio_send_otp_burn(msg.factory_cmd.remote);
 		break;
 
 	case PROTO_INVALID: {

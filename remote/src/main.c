@@ -8,6 +8,11 @@
 #include "buttons.h"
 #include "haptic.h"
 #include "indicators.h"
+#include "drv2605.h"
+
+#ifdef CONFIG_REMOTE_DRV2605_CAL_TEST
+#include "drv2605_cal_test.h"
+#endif
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -55,6 +60,12 @@ static void fault_forever(void)
 
 int main(void)
 {
+#ifdef CONFIG_REMOTE_DRV2605_CAL_TEST
+	/* Bench-only, independent of provisioning/BLE -- see remote/Kconfig.
+	 * Runs once at boot and returns; the rest of main() is unaffected. */
+	drv2605_cal_test_run();
+#endif
+
 	/* Boot-time sentinel, belt and braces alongside CMakeLists.txt's
 	 * build-time refusal to configure without a provisioning_data.h at
 	 * all — same reasoning as dongle/src/engine.c. */
@@ -70,6 +81,18 @@ int main(void)
 	k_work_queue_init(&remote_q);
 	k_work_queue_start(&remote_q, remote_stack, K_THREAD_STACK_SIZEOF(remote_stack),
 			   REMOTE_PRIORITY, NULL);
+
+	/*
+	 * Not fatal on failure -- haptic.c's PWM proxy is still the product
+	 * haptic path (BUILD_SPEC.md §13); the DRV2605L only backs the
+	 * factory calibration/OTP commands link.c dispatches
+	 * (RFRAME_DN_CAL_TRIGGER/DN_OTP_BURN). A board with nothing wired
+	 * to i2c1 just leaves those permanently unable to succeed --
+	 * drv2605_otp_status() failing is already treated as "refuse" at
+	 * the call site in link.c, the same fail-closed rule as everywhere
+	 * else on this wire.
+	 */
+	(void)drv2605_init();
 
 	if (haptic_init(&remote_q) != 0) {
 		fault_forever();

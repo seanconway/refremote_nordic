@@ -95,6 +95,20 @@ int radio_send_simsoc(enum proto_remote r, uint8_t pct)
 	return 0;
 }
 
+int radio_send_cal_trigger(enum proto_remote r)
+{
+	/* No remote to calibrate. FACAL against radio_null gets silence,
+	 * same as any other send in this configuration. */
+	ARG_UNUSED(r);
+	return -1;
+}
+
+int radio_send_otp_burn(enum proto_remote r)
+{
+	ARG_UNUSED(r);
+	return -1;
+}
+
 int radio_send_host(enum proto_remote r, bool up)
 {
 	/*

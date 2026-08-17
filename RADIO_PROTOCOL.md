@@ -863,4 +863,37 @@ A major mismatch is a **refusal to operate**, not a degraded mode (§3.2). A set
 
 ---
 
+## 17. Factory addendum (bench-only)
+
+**Not part of §5's frame tables and not subject to §16's version-bump rule**, for the same reason `PROTOCOL.md` §17 gives on the other end of this: nothing here is negotiated between a remote and a dongle discovering each other at a match — a bench technician's tool is written against a specific firmware pair, not against `RR_IDENTITY`. `radio_proto_major`/`minor` stay exactly what §3.2 already says regardless of anything in this section.
+
+| `TYPE` | Name | Len | Direction | Meaning |
+|---|---|---|---|---|
+| `0x86` | `DN_CAL_TRIGGER` | 2 | dongle → remote | Run DRV2605L auto-calibration |
+| `0x87` | `DN_OTP_BURN` | 2 | dongle → remote | Burn the last calibration into OTP memory, permanently |
+| `0x05` | `UP_FACTORY_STATUS` | 10 | remote → dongle | Result of whichever of the above ran |
+
+`DN_CAL_TRIGGER` and `DN_OTP_BURN` carry no payload beyond the two-byte header (`TYPE`, `CTR`) — there is exactly one DRV2605L per remote, so there is nothing to address.
+
+```
+UP_FACTORY_STATUS
+0: 0x05
+1: CTR
+2: state             0x00 CAL_DONE  0x01 CAL_FAILED  0x02 OTP_DONE  0x03 OTP_FAILED
+3: detail             0 except after OTP_FAILED — enum drv2605_otp_result (remote/src/drv2605.h)
+4: diag_pass          0/1, the DRV2605L's own DIAG_RESULT bit
+5-6: vdd_mv           uint16, little-endian, live supply reading at the moment of the operation
+7: a_cal_comp         meaningful on CAL_DONE, 0 otherwise
+8: a_cal_bemf
+9: feedback_control
+```
+
+**Both downlink frames are gated at the remote, not here.** `remote/src/link.c` refuses `DN_CAL_TRIGGER` and `DN_OTP_BURN` unless `drv2605_otp_status()` — a read-only bit on the DRV2605L die itself (Control4/`0x1E`), not anything this firmware remembers — reports the chip not yet programmed. `PROTOCOL.md` §17 has the fuller reasoning: the dongle's USB-serial port that originates these frames is reachable from a browser tab with Web Serial permission, materially more exposed than this radio link, so the remote-side check is the actual security boundary, not a courtesy layered on top of one.
+
+A remote that refuses (already calibrated, or the check itself failed — treated the same, fail-closed) sends no `UP_FACTORY_STATUS` at all. Silence is the bench tool's own timeout, the same "no reply is itself the signal" pattern §8.3's `ttl` handling already uses.
+
+`OTP_DONE` is irreversible per physical DRV2605L. There are no conformance cases (§14) for this addendum — it is bench tooling, verified by running it against real hardware, not a shipped contract.
+
+---
+
 *Governing documents are `SCOPE.md` v1.1 and `SYSTEM_FUNC_SPEC.md` v2.1. The wire protocol counterpart is `PROTOCOL.md` v4.0. Status, milestones, the validation ladder and the results log are in `PLAN.md`; every number in §12 is a prediction awaiting measurement, and `PLAN.md` §7 is where the measurements land.*

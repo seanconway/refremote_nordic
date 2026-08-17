@@ -173,6 +173,49 @@ enum rframe_decode_status rframe_decode(const uint8_t *buf, size_t len,
 		return RFRAME_OK;
 	}
 
+	/* Bench-only, RADIO_PROTOCOL.md's factory addendum. No payload beyond
+	 * the header — see rframe.h's comment on why. */
+	case RFRAME_DN_CAL_TRIGGER: {
+		if (len != RFRAME_HEADER_LEN) {
+			return RFRAME_ERR_LENGTH;
+		}
+		out->type = RFRAME_DN_CAL_TRIGGER;
+		out->ctr = buf[1];
+		return RFRAME_OK;
+	}
+
+	case RFRAME_DN_OTP_BURN: {
+		if (len != RFRAME_HEADER_LEN) {
+			return RFRAME_ERR_LENGTH;
+		}
+		out->type = RFRAME_DN_OTP_BURN;
+		out->ctr = buf[1];
+		return RFRAME_OK;
+	}
+
+	case RFRAME_UP_FACTORY_STATUS: {
+		uint8_t state;
+
+		if (len != 10) {
+			return RFRAME_ERR_LENGTH;
+		}
+		state = buf[2];
+		if (state > RFRAME_FACTORY_OTP_FAILED) {
+			return RFRAME_ERR_FIELD;
+		}
+		out->type = RFRAME_UP_FACTORY_STATUS;
+		out->ctr = buf[1];
+		out->up_factory_status.state = (enum rframe_factory_state)state;
+		out->up_factory_status.detail = buf[3];
+		out->up_factory_status.diag_pass = (buf[4] != 0);
+		out->up_factory_status.vdd_mv =
+			(uint16_t)((uint16_t)buf[5] | ((uint16_t)buf[6] << 8));
+		out->up_factory_status.a_cal_comp = buf[7];
+		out->up_factory_status.a_cal_bemf = buf[8];
+		out->up_factory_status.feedback_control = buf[9];
+		return RFRAME_OK;
+	}
+
 	default:
 		return RFRAME_ERR_UNKNOWN_TYPE;
 	}
@@ -304,6 +347,47 @@ int rframe_enc_dn_simsoc(uint8_t *out, size_t cap, uint8_t ctr, uint8_t pct)
 	return 3;
 }
 
+int rframe_enc_dn_cal_trigger(uint8_t *out, size_t cap, uint8_t ctr)
+{
+	if (cap < RFRAME_HEADER_LEN) {
+		return -1;
+	}
+	out[0] = RFRAME_DN_CAL_TRIGGER;
+	out[1] = ctr;
+	return RFRAME_HEADER_LEN;
+}
+
+int rframe_enc_dn_otp_burn(uint8_t *out, size_t cap, uint8_t ctr)
+{
+	if (cap < RFRAME_HEADER_LEN) {
+		return -1;
+	}
+	out[0] = RFRAME_DN_OTP_BURN;
+	out[1] = ctr;
+	return RFRAME_HEADER_LEN;
+}
+
+int rframe_enc_up_factory_status(uint8_t *out, size_t cap, uint8_t ctr,
+				 enum rframe_factory_state state, uint8_t detail,
+				 bool diag_pass, uint16_t vdd_mv, uint8_t a_cal_comp,
+				 uint8_t a_cal_bemf, uint8_t feedback_control)
+{
+	if (cap < 10) {
+		return -1;
+	}
+	out[0] = RFRAME_UP_FACTORY_STATUS;
+	out[1] = ctr;
+	out[2] = (uint8_t)state;
+	out[3] = detail;
+	out[4] = diag_pass ? 1u : 0u;
+	out[5] = (uint8_t)(vdd_mv & 0xFFu);
+	out[6] = (uint8_t)(vdd_mv >> 8);
+	out[7] = a_cal_comp;
+	out[8] = a_cal_bemf;
+	out[9] = feedback_control;
+	return 10;
+}
+
 /* ------------------------------------------------------------------------ */
 /* CTR arithmetic                                                            */
 /* ------------------------------------------------------------------------ */
@@ -363,12 +447,15 @@ const char *rframe_type_name(enum rframe_type t)
 	case RFRAME_UP_INPUT:     return "UP_INPUT";
 	case RFRAME_UP_READY:     return "UP_READY";
 	case RFRAME_UP_TELEMETRY: return "UP_TELEMETRY";
-	case RFRAME_UP_DIAG:      return "UP_DIAG";
-	case RFRAME_DN_HAPTIC:    return "DN_HAPTIC";
-	case RFRAME_DN_INDICATOR: return "DN_INDICATOR";
-	case RFRAME_DN_CONFIG:    return "DN_CONFIG";
-	case RFRAME_DN_HOST:      return "DN_HOST";
-	case RFRAME_DN_SIMSOC:    return "DN_SIMSOC";
-	default:                  return "?";
+	case RFRAME_UP_DIAG:            return "UP_DIAG";
+	case RFRAME_UP_FACTORY_STATUS:  return "UP_FACTORY_STATUS";
+	case RFRAME_DN_HAPTIC:          return "DN_HAPTIC";
+	case RFRAME_DN_INDICATOR:       return "DN_INDICATOR";
+	case RFRAME_DN_CONFIG:          return "DN_CONFIG";
+	case RFRAME_DN_HOST:            return "DN_HOST";
+	case RFRAME_DN_SIMSOC:          return "DN_SIMSOC";
+	case RFRAME_DN_CAL_TRIGGER:     return "DN_CAL_TRIGGER";
+	case RFRAME_DN_OTP_BURN:        return "DN_OTP_BURN";
+	default:                        return "?";
 	}
 }

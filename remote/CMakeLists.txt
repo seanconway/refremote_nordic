@@ -22,10 +22,14 @@ target_sources(app PRIVATE
   src/buttons.c
   src/haptic.c
   src/indicators.c
+  src/drv2605.c
   ../common/provisioning.c
   ../common/rframe.c
   ../common/ind_colour.c
 )
+
+# DRV2605L breadboard bring-up (bench-only) -- see remote/Kconfig.
+target_sources_ifdef(CONFIG_REMOTE_DRV2605_CAL_TEST app PRIVATE src/drv2605_cal_test.c)
 
 # remote/BUILD_SPEC.md §3: common/ is shared with the dongle by CMake source
 # reference, not by copying — one codec, compiled into both firmwares and

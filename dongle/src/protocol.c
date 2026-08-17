@@ -71,6 +71,14 @@ static const char *const link_state_names[PROTO_LINK_STATE_COUNT] = {
 	[PROTO_LINK_DISCONNECTED] = "DISCONNECTED",
 };
 
+/* §16, bench-only. */
+static const char *const factory_state_names[PROTO_FACTORY_STATE_COUNT] = {
+	[PROTO_FACTORY_CAL_DONE]   = "CAL_DONE",
+	[PROTO_FACTORY_CAL_FAILED] = "CAL_FAILED",
+	[PROTO_FACTORY_OTP_DONE]   = "OTP_DONE",
+	[PROTO_FACTORY_OTP_FAILED] = "OTP_FAILED",
+};
+
 const char *proto_button_name(enum proto_button b)
 {
 	return (b < PROTO_BTN_COUNT) ? button_names[b] : "?";
@@ -109,6 +117,11 @@ const char *proto_ind_colour_name(enum proto_ind_colour c)
 const char *proto_link_state_name(enum proto_link_state s)
 {
 	return (s < PROTO_LINK_STATE_COUNT) ? link_state_names[s] : "?";
+}
+
+const char *proto_factory_state_name(enum proto_factory_state s)
+{
+	return (s < PROTO_FACTORY_STATE_COUNT) ? factory_state_names[s] : "?";
 }
 
 uint16_t proto_next_seq(uint16_t seq)
@@ -467,6 +480,27 @@ static void parse_test(char *rest, struct proto_msg *out)
 	out->test.mode = mode;
 }
 
+/* FACAL <remote> / FACOTP <remote> — §16, bench-only. Both take the same
+ * single-argument shape, so one body serves both, distinguished by the
+ * `type` the caller passes in — same pattern as parse_no_args(). */
+static void parse_factory_cmd(char *rest, struct proto_msg *out, enum proto_type type)
+{
+	char *tok[PROTO_MAX_TOKENS];
+	uint32_t remote;
+
+	if (split_tokens(rest, tok, PROTO_MAX_TOKENS) != 1u) {
+		invalid(out, "wrong arg count");
+		return;
+	}
+	if (!lookup_name(remote_names, PROTO_REMOTE_COUNT, tok[0], &remote)) {
+		invalid(out, "bad remote");
+		return;
+	}
+
+	out->type = type;
+	out->factory_cmd.remote = (enum proto_remote)remote;
+}
+
 /* ------------------------------------------------------------------------ */
 /* Dongle -> App, parsed for encoder round-trips only                        */
 /* ------------------------------------------------------------------------ */
@@ -624,6 +658,61 @@ static void parse_join(char *rest, struct proto_msg *out)
 	out->join.remote = (enum proto_remote)remote;
 }
 
+/* FACSTATUS <remote> <state> <detail> <diag> <vdd_mv> <comp> <bemf> <fb> —
+ * §16, bench-only. */
+static void parse_facstatus(char *rest, struct proto_msg *out)
+{
+	char *tok[PROTO_MAX_TOKENS];
+	uint32_t remote, state, detail, diag, vdd, comp, bemf, fb;
+
+	if (split_tokens(rest, tok, PROTO_MAX_TOKENS) != 8u) {
+		invalid(out, "wrong arg count");
+		return;
+	}
+	if (!lookup_name(remote_names, PROTO_REMOTE_COUNT, tok[0], &remote)) {
+		invalid(out, "bad remote");
+		return;
+	}
+	if (!lookup_name(factory_state_names, PROTO_FACTORY_STATE_COUNT, tok[1], &state)) {
+		invalid(out, "bad state");
+		return;
+	}
+	if (!parse_uint(tok[2], &detail) || detail > 255u) {
+		invalid(out, "bad detail");
+		return;
+	}
+	if (!parse_uint(tok[3], &diag) || diag > 1u) {
+		invalid(out, "bad diag");
+		return;
+	}
+	if (!parse_uint(tok[4], &vdd) || vdd > 65535u) {
+		invalid(out, "bad vdd_mv");
+		return;
+	}
+	if (!parse_uint(tok[5], &comp) || comp > 255u) {
+		invalid(out, "bad a_cal_comp");
+		return;
+	}
+	if (!parse_uint(tok[6], &bemf) || bemf > 255u) {
+		invalid(out, "bad a_cal_bemf");
+		return;
+	}
+	if (!parse_uint(tok[7], &fb) || fb > 255u) {
+		invalid(out, "bad feedback_control");
+		return;
+	}
+
+	out->type = PROTO_FACSTATUS;
+	out->facstatus.remote = (enum proto_remote)remote;
+	out->facstatus.state = (enum proto_factory_state)state;
+	out->facstatus.detail = (uint8_t)detail;
+	out->facstatus.diag_pass = (diag == 1u);
+	out->facstatus.vdd_mv = (uint16_t)vdd;
+	out->facstatus.a_cal_comp = (uint8_t)comp;
+	out->facstatus.a_cal_bemf = (uint8_t)bemf;
+	out->facstatus.feedback_control = (uint8_t)fb;
+}
+
 /* ------------------------------------------------------------------------ */
 
 static void parse_no_args(const char *rest, struct proto_msg *out,
@@ -706,6 +795,11 @@ void proto_parse(char *line, struct proto_msg *out)
 		parse_text(raw, out, PROTO_ECHO);
 	} else if (strcmp(kw, "TEST") == 0) {
 		parse_test(args, out);
+	/* §16, bench-only — see protocol.h's comment on enum proto_factory_state */
+	} else if (strcmp(kw, "FACAL") == 0) {
+		parse_factory_cmd(args, out, PROTO_FACAL);
+	} else if (strcmp(kw, "FACOTP") == 0) {
+		parse_factory_cmd(args, out, PROTO_FACOTP);
 	/* Dongle -> App, parsed for round-trip tests only */
 	} else if (strcmp(kw, "HELLO") == 0) {
 		parse_hello(args, out);
@@ -721,6 +815,8 @@ void proto_parse(char *line, struct proto_msg *out)
 		parse_text(raw, out, PROTO_LOG);
 	} else if (strcmp(kw, "ERR") == 0) {
 		parse_text(raw, out, PROTO_ERR);
+	} else if (strcmp(kw, "FACSTATUS") == 0) {
+		parse_facstatus(args, out);
 	}
 	/*
 	 * else: unknown keyword -> PROTO_UNKNOWN, ignore silently (§2.2). This
@@ -804,4 +900,20 @@ int proto_enc_log(char *out, size_t cap, const char *text)
 int proto_enc_err(char *out, size_t cap, const char *text)
 {
 	return enc_result(cap, snprintf(out, cap, "ERR %s", text));
+}
+
+int proto_enc_facstatus(char *out, size_t cap, enum proto_remote r,
+			enum proto_factory_state state, uint8_t detail, bool diag_pass,
+			uint16_t vdd_mv, uint8_t a_cal_comp, uint8_t a_cal_bemf,
+			uint8_t feedback_control)
+{
+	return enc_result(cap, snprintf(out, cap, "FACSTATUS %s %s %u %u %u %u %u %u",
+					proto_remote_name(r),
+					proto_factory_state_name(state),
+					(unsigned int)detail,
+					diag_pass ? 1u : 0u,
+					(unsigned int)vdd_mv,
+					(unsigned int)a_cal_comp,
+					(unsigned int)a_cal_bemf,
+					(unsigned int)feedback_control));
 }

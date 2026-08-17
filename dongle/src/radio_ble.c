@@ -742,6 +742,24 @@ static void handle_notify(struct remote_state *rs, const uint8_t *data, uint16_t
 		diag(rs, text);
 		break;
 	}
+	case RFRAME_UP_FACTORY_STATUS:
+		/* Bench-only, RADIO_PROTOCOL.md's factory addendum. Always a
+		 * reply to radio_send_cal_trigger()/radio_send_otp_burn()
+		 * below, never unsolicited — see radio.h's comment. The cast
+		 * relies on enum proto_factory_state mirroring enum
+		 * rframe_factory_state's numbering one-for-one (protocol.h's
+		 * comment on proto_factory_state) — keep the two in lockstep
+		 * rather than adding a translation table for four values. */
+		if (callbacks->on_factory_status) {
+			callbacks->on_factory_status(
+				rs->which,
+				(enum proto_factory_state)msg.up_factory_status.state,
+				msg.up_factory_status.detail, msg.up_factory_status.diag_pass,
+				msg.up_factory_status.vdd_mv, msg.up_factory_status.a_cal_comp,
+				msg.up_factory_status.a_cal_bemf,
+				msg.up_factory_status.feedback_control);
+		}
+		break;
 	default:
 		break;
 	}
@@ -1234,6 +1252,50 @@ int radio_send_simsoc(enum proto_remote r, uint8_t pct)
 	}
 
 	n = rframe_enc_dn_simsoc(buf, sizeof(buf), 0, pct);
+	if (n < 0) {
+		return -1;
+	}
+	return bt_gatt_write_without_response(rs->conn, rs->downlink_handle, buf,
+					      (uint16_t)n, false);
+}
+
+int radio_send_cal_trigger(enum proto_remote r)
+{
+	struct remote_state *rs;
+	uint8_t buf[RFRAME_MAX_LEN];
+	int n;
+
+	if (r >= PROTO_REMOTE_COUNT) {
+		return -1;
+	}
+	rs = &remotes[r];
+	if (rs->phase != PHASE_READY) {
+		return -1;
+	}
+
+	n = rframe_enc_dn_cal_trigger(buf, sizeof(buf), 0);
+	if (n < 0) {
+		return -1;
+	}
+	return bt_gatt_write_without_response(rs->conn, rs->downlink_handle, buf,
+					      (uint16_t)n, false);
+}
+
+int radio_send_otp_burn(enum proto_remote r)
+{
+	struct remote_state *rs;
+	uint8_t buf[RFRAME_MAX_LEN];
+	int n;
+
+	if (r >= PROTO_REMOTE_COUNT) {
+		return -1;
+	}
+	rs = &remotes[r];
+	if (rs->phase != PHASE_READY) {
+		return -1;
+	}
+
+	n = rframe_enc_dn_otp_burn(buf, sizeof(buf), 0);
 	if (n < 0) {
 		return -1;
 	}

@@ -90,6 +90,7 @@ Consequence, still true: `led0`'s `gpio-leds` node is **not used**. The haptic p
 | `src/link.c` | BLE peripheral, advertising, the RefRemote Link Service, uplink `CTR` | No |
 | `src/buttons.c` | Debounce and gesture classification | No |
 | `src/haptic.c` | Waveform table, `ttl` check, PWM rendering | No |
+| `src/drv2605.c` | DRV2605L auto-calibration and OTP burn — factory-only for now (PLAN.md §4.17); the intended eventual `haptic.c` PWM-proxy replacement (§13) | No |
 | `src/indicators.c` | `LED_F1`, `LED_F2`, `LED_LINK`, `LED_PWR` | No |
 | `src/main.c` | Boot order, and the refusal path when unprovisioned | No |
 

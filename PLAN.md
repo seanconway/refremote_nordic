@@ -228,9 +228,11 @@ The invariant is **exactly one producer feeding the transmit path**, so no locki
 
 Cooperative, not preemptible, and that part is not cosmetic: a preemptible queue can be descheduled between receiving an `ACK` and handing the `TAP` to the controller, and that latency is invisible — it presents as a missing tap under load and as nothing else.
 
-### 4.7 `PROTOCOL.md` is duplicated, not linked
+### 4.7 `PROTOCOL.md` is duplicated, not linked — **reversed 2026-08-17, §4.17**
 
 The two copies were previously kept in step by a filesystem hard link. That does not survive an editor writing a new file rather than modifying in place — it silently broke during the v3.0 revision, leaving the two repos on different versions with no indication. Copy explicitly and **verify the hashes match** after any change.
+
+**No longer current.** `wrsl-app`'s copy is deleted; `PROTOCOL.md` lives only here now, the same as `SCOPE.md`/`SYSTEM_FUNC_SPEC.md` always have. The two-copy design was a self-inflicted fragility the hard-link failure exposed, not a real constraint — removing the second copy removes the drift failure mode instead of asking future edits to remember the hash-comparison discipline this entry used to require. See §4.17.
 
 **`RADIO_PROTOCOL.md` is not duplicated.** It lives in this repo only, because the scoreboard never sees the radio and giving it a copy would create a second file to keep in step for no reader's benefit.
 
@@ -352,6 +354,22 @@ Every prior version of this document treated R3 (ERM haptic range), R4 (`BEAT`/`
 **M5 is promoted from a coarse paragraph to real queue steps (§2.3, S13–S19)** — not because the old low-resolution treatment was wrong in principle (§2.3's own header still says "detail arrives when the predecessor closes," and M4 closing is exactly what triggered this), but because the user's stated intent makes M5 the immediate next build target, not a distant one.
 
 **What stays near-term regardless:** S8/S9 (does the 2:1 link work at all — a scoring-integrity check, not a nice-to-have) and S13–S19 (M5's build-out) are not deferred by this decision. Only *validation whose absence doesn't block building the next thing* moves to the wait — the same test §4.15 already applied to R3/R4/R6, now applied to the rest of the ladder.
+
+### 4.17 DRV2605L calibration/OTP is factory tooling relayed through the dongle, gated at the remote — not a second BLE service, not a separate factory firmware image
+
+Bring-up of the DRV2605L haptic driver IC (M5's build-out, §4.16) surfaced a real per-unit manufacturing question: the chip's auto-calibration accounts for actuator-to-actuator variance, and its result can be burned permanently into the chip's own one-time-programmable memory (registers `0x16`-`0x1A`) so a unit never needs to recalibrate after first power-on. Getting a bench tool to trigger that safely, exactly once, without becoming a standing attack surface on shipped hardware, took several reversals worth recording.
+
+**Rejected: a second BLE peer on the remote.** A laptop connecting directly to a remote's own GATT server would need either the same pre-shared-LTK/no-pairing trick the dongle uses (not reachable from an ordinary OS Bluetooth stack without writing a second custom-firmware bridge dongle) or `CONFIG_BT_BONDABLE=y` plus an application-level token — and enabling bondable at all raises an unresolved question about whether it also weakens the *existing* static-LTK-only model on the match-facing link, which is the one that actually matters. Not worth the risk for a bench-only feature.
+
+**Adopted: route through the dongle instead.** `FACAL`/`FACOTP`/`FACSTATUS` (`PROTOCOL.md` §17, bench-only, no version bump — see that section for why) are new USB-serial commands the dongle relays to `DN_CAL_TRIGGER`/`DN_OTP_BURN`/`UP_FACTORY_STATUS` (`RADIO_PROTOCOL.md` §17) over the *existing* encrypted `RR_UPLINK`/`RR_DOWNLINK` link. No new BLE surface, no new provisioning field, no token to manage — the credential is physical possession of the paired dongle, which the security model already rests on.
+
+**Rejected: a separate factory-test dongle firmware image, reflashed via the existing DFU mechanism before and after each bench session.** This was the initial recommendation — it would have kept the capability out of every shipped dongle's compiled firmware entirely. Reversed once the actual constraint became clear: the *remote's* Tag-Connect/SWD pads aren't reachable once assembled, ruling out the equivalent two-image approach there, and a design that put the calibration trigger on the remote side either way needed a remote-side answer regardless of what the dongle did. Once the remote-side gate below was accepted as sufficient, adding a second dongle image bought defense-in-depth at the cost of an extra DFU pass on every unit, forever — a real tradeoff, decided in the dongle's favour of a single production image.
+
+**The actual enforcement point: `drv2605_otp_status()` on the remote, not anything on the dongle's serial port.** `remote/src/link.c` refuses `DN_CAL_TRIGGER`/`DN_OTP_BURN` unless the DRV2605L's own `OTP_STATUS` bit (`0x1E`, read-only) reports not-yet-programmed. This is a hardware fact, not firmware state — it can't drift, doesn't need NVS (`prj.conf`'s `CONFIG_BT_SETTINGS=n` stays untouched), and survives even a full firmware reflash. The dongle's USB-serial port is explicitly *more* exposed than the radio link it feeds — it's the same port the officiating app opens from a browser tab via Web Serial — so relaying `FACAL`/`FACOTP` unconditionally and gating only at the remote was a deliberate choice, not an oversight: the alternative (gating at the dongle too) would have added a second, redundant check with no unit it actually protects that the remote-side one doesn't already cover.
+
+**Consequence for production wiring, settled alongside this:** VIN and the DRV2605L's I2C pull-ups are on separate rails on the PCB — VIN from the raw LiPo (for drive headroom; the DRV2605L's own power-supply feedback compensates for the resulting voltage sag across a discharge cycle), pull-ups on the regulated 3.3V rail (the DRV2605L's digital I/O thresholds are fixed, not VDD-ratiometric, so this is valid per the datasheet regardless of where VIN sits). OTP programming specifically needs VDD in 4.0–4.4V, narrower than the battery's normal range; the nPM1300 (§1's phase map) supplies the live reading `drv2605_burn_otp()` gates on, and a bench TP4056/TP4057-class charger pre-charges loose cells to a known state before assembly.
+
+**Bench-proven on the DK before any of this existed:** `remote/src/drv2605_cal_test.c` (now a thin wrapper over the real driver, `remote/src/drv2605.c`) validated the I2C wiring (`i2c1` on P1.04/P1.05 — every P0 pin was already claimed, §2 of `remote/BUILD_SPEC.md`) and the register-level auto-cal sequence against real hardware first. `RATED_VOLTAGE`/`OD_CLAMP` remain deliberately unset placeholders throughout all of this — they have to come from the real Vybronics motor's datasheet against whatever VIN the PCB lands on, not a guessed constant.
 
 ---
 

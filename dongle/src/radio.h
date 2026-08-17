@@ -86,6 +86,20 @@ struct radio_cb {
 	 * layer has already disconnected by the time this fires.
 	 */
 	void (*on_fault)(enum proto_remote src, const char *code);
+
+	/*
+	 * RADIO_PROTOCOL.md's factory addendum (bench-only, mirrors §16 of
+	 * PROTOCOL.md on the other end of this). From RFRAME_UP_FACTORY_STATUS,
+	 * itself only ever sent in reply to radio_send_cal_trigger() or
+	 * radio_send_otp_burn() below — there is no unsolicited factory status.
+	 * `detail` is opaque here (enum drv2605_otp_result on the remote's
+	 * side; this layer has no business depending on that header) and is
+	 * only meaningful when state is PROTO_FACTORY_OTP_FAILED.
+	 */
+	void (*on_factory_status)(enum proto_remote src, enum proto_factory_state state,
+				  uint8_t detail, bool diag_pass, uint16_t vdd_mv,
+				  uint8_t a_cal_comp, uint8_t a_cal_bemf,
+				  uint8_t feedback_control);
 };
 
 /*
@@ -118,6 +132,15 @@ int radio_send_haptic(enum proto_remote r, enum proto_waveform w,
 int radio_send_indicator(enum proto_remote r, const struct indicator_state *s);
 int radio_send_config(enum proto_remote r, uint8_t haptic, uint8_t bright);
 int radio_send_simsoc(enum proto_remote r, uint8_t pct);
+
+/* RADIO_PROTOCOL.md's factory addendum (bench-only). Negative return means
+ * not sent — same "normal outcome, not an error" reasoning as
+ * radio_send_haptic() above; engine.c's FACAL/FACOTP handling has nothing
+ * further to do about it beyond what happens already (silence: no
+ * FACSTATUS reply reaches the bench tool, which is itself the signal that
+ * the command did not land). */
+int radio_send_cal_trigger(enum proto_remote r);
+int radio_send_otp_burn(enum proto_remote r);
 
 /* DN_HOST carries the half of the path the remote cannot see: the USB cable,
  * the browser tab, the laptop's sleep state, the app's own watchdog. */

@@ -280,6 +280,114 @@ static void dn_simsoc_enc_rejects_out_of_range(void)
 }
 
 /* ------------------------------------------------------------------------ */
+/* Factory addendum — RADIO_PROTOCOL.md's bench-only frames, not the main    */
+/* table. See rframe.h's comment on RFRAME_DN_CAL_TRIGGER.                   */
+/* ------------------------------------------------------------------------ */
+
+static void round_trip_dn_cal_trigger(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	struct rframe_msg msg;
+
+	int n = rframe_enc_dn_cal_trigger(buf, sizeof(buf), 3);
+
+	CHECK(n == 2, "got %d", n);
+
+	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
+
+	CHECK(st == RFRAME_OK, "status %d", st);
+	CHECK(msg.type == RFRAME_DN_CAL_TRIGGER, "type %d", msg.type);
+	CHECK(msg.ctr == 3, "ctr %u", msg.ctr);
+}
+
+static void round_trip_dn_otp_burn(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	struct rframe_msg msg;
+
+	int n = rframe_enc_dn_otp_burn(buf, sizeof(buf), 9);
+
+	CHECK(n == 2, "got %d", n);
+
+	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
+
+	CHECK(st == RFRAME_OK, "status %d", st);
+	CHECK(msg.type == RFRAME_DN_OTP_BURN, "type %d", msg.type);
+	CHECK(msg.ctr == 9, "ctr %u", msg.ctr);
+}
+
+static void round_trip_up_factory_status(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	struct rframe_msg msg;
+
+	int n = rframe_enc_up_factory_status(buf, sizeof(buf), 5,
+					     RFRAME_FACTORY_OTP_FAILED, 2 /* VDD_OUT_OF_RANGE */,
+					     true, 3300, 0x12, 0x34, 0x56);
+
+	CHECK(n == 10, "got %d", n);
+
+	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
+
+	CHECK(st == RFRAME_OK, "status %d", st);
+	CHECK(msg.type == RFRAME_UP_FACTORY_STATUS, "type %d", msg.type);
+	CHECK(msg.up_factory_status.state == RFRAME_FACTORY_OTP_FAILED, "state %d",
+	      msg.up_factory_status.state);
+	CHECK(msg.up_factory_status.detail == 2, "detail %u", msg.up_factory_status.detail);
+	CHECK(msg.up_factory_status.diag_pass == true, "diag_pass %d",
+	      msg.up_factory_status.diag_pass);
+	CHECK(msg.up_factory_status.vdd_mv == 3300, "vdd_mv %u", msg.up_factory_status.vdd_mv);
+	CHECK(msg.up_factory_status.a_cal_comp == 0x12, "a_cal_comp 0x%02X",
+	      msg.up_factory_status.a_cal_comp);
+	CHECK(msg.up_factory_status.a_cal_bemf == 0x34, "a_cal_bemf 0x%02X",
+	      msg.up_factory_status.a_cal_bemf);
+	CHECK(msg.up_factory_status.feedback_control == 0x56, "feedback_control 0x%02X",
+	      msg.up_factory_status.feedback_control);
+}
+
+/* A wire vdd_mv near the top of uint16_t range, to catch a byte-order bug
+ * that a small round-numbered value (3300) would not expose. */
+static void up_factory_status_vdd_byte_order(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	struct rframe_msg msg;
+
+	int n = rframe_enc_up_factory_status(buf, sizeof(buf), 0, RFRAME_FACTORY_CAL_DONE, 0,
+					     true, 0xA5C3, 0, 0, 0);
+
+	CHECK(n == 10, "got %d", n);
+	CHECK(buf[5] == 0xC3, "low byte 0x%02X", buf[5]);
+	CHECK(buf[6] == 0xA5, "high byte 0x%02X", buf[6]);
+
+	enum rframe_decode_status st = rframe_decode(buf, (size_t)n, &msg);
+
+	CHECK(st == RFRAME_OK, "status %d", st);
+	CHECK(msg.up_factory_status.vdd_mv == 0xA5C3, "vdd_mv 0x%04X",
+	      msg.up_factory_status.vdd_mv);
+}
+
+static void up_factory_status_rejects_bad_state(void)
+{
+	uint8_t buf[10] = { RFRAME_UP_FACTORY_STATUS, 0, 0x04 /* one past OTP_FAILED */,
+			     0, 0, 0, 0, 0, 0, 0 };
+	struct rframe_msg msg;
+
+	enum rframe_decode_status st = rframe_decode(buf, sizeof(buf), &msg);
+
+	CHECK(st == RFRAME_ERR_FIELD, "got %d", st);
+}
+
+static void dn_cal_trigger_rejects_payload(void)
+{
+	uint8_t buf[3] = { RFRAME_DN_CAL_TRIGGER, 0, 0xFF }; /* one byte too many */
+	struct rframe_msg msg;
+
+	enum rframe_decode_status st = rframe_decode(buf, sizeof(buf), &msg);
+
+	CHECK(st == RFRAME_ERR_LENGTH, "got %d", st);
+}
+
+/* ------------------------------------------------------------------------ */
 /* Conformance cases                                                         */
 /* ------------------------------------------------------------------------ */
 
@@ -461,6 +569,12 @@ int main(void)
 		{ "round trip: DN_SIMSOC",            round_trip_dn_simsoc },
 		{ "A1: DN_SIMSOC out-of-range rejected", a_field_dn_simsoc_out_of_range_rejected },
 		{ "DN_SIMSOC encoder rejects out-of-range", dn_simsoc_enc_rejects_out_of_range },
+		{ "round trip: DN_CAL_TRIGGER",       round_trip_dn_cal_trigger },
+		{ "round trip: DN_OTP_BURN",          round_trip_dn_otp_burn },
+		{ "round trip: UP_FACTORY_STATUS",    round_trip_up_factory_status },
+		{ "UP_FACTORY_STATUS vdd_mv byte order", up_factory_status_vdd_byte_order },
+		{ "UP_FACTORY_STATUS rejects bad state", up_factory_status_rejects_bad_state },
+		{ "DN_CAL_TRIGGER rejects a payload",  dn_cal_trigger_rejects_payload },
 		{ "A1: unknown button rejected",      a1_unknown_button_rejected },
 		{ "A1: zero button rejected",         a1_zero_button_rejected },
 		{ "A1: unknown gesture rejected",     a1_unknown_gesture_rejected },

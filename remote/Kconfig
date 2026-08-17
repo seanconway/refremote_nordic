@@ -14,6 +14,40 @@ config PROVISIONING_HEADER_DIR
 	  No default. CMakeLists.txt FATAL_ERRORs at configure time if this
 	  is empty or the file isn't there.
 
+config REMOTE_DRV2605_CAL_TEST
+	bool "Run a DRV2605L auto-calibration smoke test at boot (bench only)"
+	default n
+	help
+	  Breadboard bring-up for the DRV2605L haptic driver IC on i2c1 (P1.04
+	  SDA / P1.05 SCL — remote/boards/nrf52840dk_nrf52840.overlay). Runs
+	  drv2605_cal_test_run() before anything else in main(), independent
+	  of provisioning/BLE — a bare hardware smoke test that exercises
+	  drv2605.c's real driver (drv2605_calibrate()) without needing the
+	  dongle, BLE, or the factory link protocol working first, and prints
+	  the result and the three per-unit register values (A_CAL_COMP,
+	  A_CAL_BEMF, the calibrated FEEDBACK_CONTROL byte) over RTT. Not
+	  linked into an ordinary build; src/haptic.c's PWM back end is still
+	  what the product path uses until a driver IC decision is made
+	  (BUILD_SPEC.md §13).
+
+config REMOTE_SYNTHETIC_VDD_MV
+	int "drv2605_read_vdd_mv() placeholder, millivolts (no PMIC on the DK)"
+	default 3300
+	help
+	  There is no nPM1300 on the DK to read a real DRV2605L VDD/VIN
+	  voltage from (PLAN.md S17/S18 is where a real fuel gauge arrives).
+	  drv2605.c returns this fixed value instead — same convention as
+	  link.c's SYNTHETIC_BATTERY_PCT: obviously synthetic rather than a
+	  plausible, drifting one.
+
+	  Deliberately defaults BELOW the DRV2605L's 4.0-4.4V OTP-programming
+	  window, so drv2605_burn_otp() correctly refuses on every ordinary
+	  DK build — there is no real battery here to safely burn OTP
+	  against, and refusing is correct, not an inconvenience. Only raise
+	  this into the 4.0-4.4V range for a deliberate, supervised bench
+	  test of the OTP path itself, on a build nobody mistakes for
+	  representative of a real unit's supply.
+
 config REMOTE_TEST_RADIO_PROTO_MAJOR
 	int "RR_IDENTITY radio_proto_major to report (bench test only)"
 	default 2

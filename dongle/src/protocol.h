@@ -153,6 +153,26 @@ enum proto_link_state {
 	PROTO_LINK_STATE_COUNT
 };
 
+/*
+ * PROTOCOL.md's Factory Commands appendix -- bench-only, never sent by the
+ * officiating app, and deliberately not part of the main versioned wire
+ * table above. See PROTOCOL.md §16 for the full reasoning: this exists so
+ * a bench technician's tool can drive a remote's DRV2605L calibration/OTP
+ * sequence (RADIO_PROTOCOL.md's matching addendum) over the same USB-
+ * serial port everything else uses, without a second BLE service on the
+ * remote. Mirrors enum rframe_factory_state (common/rframe.h) one-for-one;
+ * kept as a separate enum rather than reusing that one because protocol.h
+ * must not depend on common/rframe.h (rframe.h depends on protocol.h, not
+ * the other way — see rframe.h's own header comment).
+ */
+enum proto_factory_state {
+	PROTO_FACTORY_CAL_DONE = 0,
+	PROTO_FACTORY_CAL_FAILED,
+	PROTO_FACTORY_OTP_DONE,
+	PROTO_FACTORY_OTP_FAILED,
+	PROTO_FACTORY_STATE_COUNT
+};
+
 enum proto_type {
 	PROTO_UNKNOWN = 0,   /* unrecognised keyword — ignore silently (§2.2) */
 	PROTO_INVALID,       /* recognised keyword, unusable arguments        */
@@ -168,6 +188,10 @@ enum proto_type {
 	PROTO_ECHO,
 	PROTO_TEST,
 
+	/* §16, bench-only. See enum proto_factory_state's comment. */
+	PROTO_FACAL,
+	PROTO_FACOTP,
+
 	/* Dongle -> App. Parsed only so encoders can be round-tripped in the
 	 * host suite; the firmware never receives these. */
 	PROTO_HELLO,
@@ -176,7 +200,8 @@ enum proto_type {
 	PROTO_JOIN,
 	PROTO_PONG,
 	PROTO_LOG,
-	PROTO_ERR
+	PROTO_ERR,
+	PROTO_FACSTATUS
 };
 
 /*
@@ -248,6 +273,22 @@ struct proto_msg {
 			const char *set;
 			uint32_t caps;
 		} hello;
+
+		/* FACAL <remote> / FACOTP <remote> — §16, bench-only. */
+		struct { enum proto_remote remote; } factory_cmd;
+
+		/* FACSTATUS <remote> <state> <detail> <diag> <vdd_mv> <comp> <bemf> <fb>
+		 * — §16, bench-only. */
+		struct {
+			enum proto_remote remote;
+			enum proto_factory_state state;
+			uint8_t detail;
+			bool diag_pass;
+			uint16_t vdd_mv;
+			uint8_t a_cal_comp;
+			uint8_t a_cal_bemf;
+			uint8_t feedback_control;
+		} facstatus;
 	};
 };
 
@@ -291,6 +332,7 @@ const char *proto_waveform_name(enum proto_waveform w);
 const char *proto_ind_mode_name(enum proto_ind_mode m);
 const char *proto_ind_colour_name(enum proto_ind_colour c);
 const char *proto_link_state_name(enum proto_link_state s);
+const char *proto_factory_state_name(enum proto_factory_state s);
 
 /* ------------------------------------------------------------------------ */
 /* Encoding                                                                  */
@@ -312,6 +354,10 @@ int proto_enc_pong(char *out, size_t cap);
 int proto_enc_echo(char *out, size_t cap, const char *text);
 int proto_enc_log(char *out, size_t cap, const char *text);
 int proto_enc_err(char *out, size_t cap, const char *text);
+int proto_enc_facstatus(char *out, size_t cap, enum proto_remote r,
+			enum proto_factory_state state, uint8_t detail, bool diag_pass,
+			uint16_t vdd_mv, uint8_t a_cal_comp, uint8_t a_cal_bemf,
+			uint8_t feedback_control);
 
 /* Post-increment wrap. Natural uint16_t overflow — 65535 -> 0 — which is why
  * there is no modulo here any more. The app handles the discontinuity with a

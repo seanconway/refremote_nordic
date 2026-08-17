@@ -443,6 +443,47 @@ static void cfg_parsed(void)
 	CHECK(argc.type == PROTO_INVALID, "CFG needs exactly 3 arguments");
 }
 
+/* §16, bench-only — FACAL/FACOTP/FACSTATUS. */
+static void factory_cmd_parsed(void)
+{
+	struct proto_msg cal, otp, argc, badremote;
+
+	PARSE(cal, "FACAL RED");
+	CHECK(cal.type == PROTO_FACAL && cal.factory_cmd.remote == PROTO_REMOTE_RED,
+	      "FACAL RED");
+
+	PARSE(otp, "FACOTP GREEN");
+	CHECK(otp.type == PROTO_FACOTP && otp.factory_cmd.remote == PROTO_REMOTE_GREEN,
+	      "FACOTP GREEN");
+
+	PARSE(argc, "FACAL RED GREEN");
+	CHECK(argc.type == PROTO_INVALID, "FACAL takes exactly one remote");
+
+	PARSE(badremote, "FACAL BOTH");
+	CHECK(badremote.type == PROTO_INVALID, "FACAL does not accept BOTH");
+}
+
+static void facstatus_roundtrips(void)
+{
+	char buf[PROTO_MAX_LINE];
+	struct proto_msg m;
+	int n = proto_enc_facstatus(buf, sizeof(buf), PROTO_REMOTE_RED,
+				    PROTO_FACTORY_OTP_FAILED, 2, false, 3300, 0x12, 0x34, 0x56);
+
+	CHECK(n > 0, "encode failed");
+	proto_parse(buf, &m);
+	CHECK(m.type == PROTO_FACSTATUS, "type");
+	CHECK(m.facstatus.remote == PROTO_REMOTE_RED, "remote");
+	CHECK(m.facstatus.state == PROTO_FACTORY_OTP_FAILED, "state");
+	CHECK(m.facstatus.detail == 2u, "detail %u", m.facstatus.detail);
+	CHECK(m.facstatus.diag_pass == false, "diag_pass");
+	CHECK(m.facstatus.vdd_mv == 3300u, "vdd_mv %u", m.facstatus.vdd_mv);
+	CHECK(m.facstatus.a_cal_comp == 0x12u, "a_cal_comp 0x%02x", m.facstatus.a_cal_comp);
+	CHECK(m.facstatus.a_cal_bemf == 0x34u, "a_cal_bemf 0x%02x", m.facstatus.a_cal_bemf);
+	CHECK(m.facstatus.feedback_control == 0x56u, "feedback_control 0x%02x",
+	      m.facstatus.feedback_control);
+}
+
 static void simsoc_parsed(void)
 {
 	struct proto_msg m, hi, argc;
@@ -665,6 +706,8 @@ int main(void)
 		{ "T16 parser is stateless",     t16_parser_is_stateless },
 		{ "ACK and SILENT",              ack_and_silent },
 		{ "CFG parsed",                  cfg_parsed },
+		{ "FACAL/FACOTP parsed",         factory_cmd_parsed },
+		{ "FACSTATUS round-trips",       facstatus_roundtrips },
 		{ "SIMSOC parsed",               simsoc_parsed },
 		{ "simple messages",             simple_messages },
 		{ "v2.0 keywords are unknown",   v2_keywords_are_unknown },

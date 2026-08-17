@@ -1,1 +1,5 @@
 build*/
+
+# Per-unit QC data from remote/tools/factory_calibrate.py -- not source.
+tools/factory_calibration_log.csv
+tools/__pycache__/

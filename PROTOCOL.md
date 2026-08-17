@@ -576,3 +576,23 @@ T3, T4 and T5 are the ones that matter for framing. T7 is the v2.0-compatibility
 | 4.0 | `STATE`'s `<f1rgb>`/`<f2rgb>` hex arguments replaced by `<f1colour>`/`<f2colour>`, one of a fixed `RED`/`GREEN`/`BLUE`/`YELLOW` palette. Changed argument meaning — major by this section's own rule. |
 
 Additive changes — new keywords, new optional trailing arguments — bump the minor version; unknown-keyword tolerance in §2.2 makes them non-breaking. Changing the meaning, argument count or argument order of an existing message bumps the major version.
+
+---
+
+## 17. Factory Commands (bench-only)
+
+**Not part of the versioned contract above, and deliberately excluded from §3's count.** `FACAL`, `FACOTP` and `FACSTATUS` exist so a manufacturing-bench tool can drive a remote's DRV2605L haptic-driver calibration and one-time-programmable memory burn (`remote/src/drv2605.c`) over this same USB-serial port, relayed to the remote over the existing encrypted radio link rather than a second BLE service — see `RADIO_PROTOCOL.md` §17 for the matching downlink/uplink frames and the fuller design reasoning. The officiating scoreboard app never sends these and does not need to recognise them.
+
+This section is exempt from §16's version-bump rule. That rule exists so the two ends of a *negotiated* link can detect a compatibility gap; nothing here is negotiated; the bench tool is written against a specific firmware build, not discovered at runtime the way the officiating app discovers a dongle's `HELLO`. Bumping `PROTO_VERSION` for an addition neither peer of the real contract will ever see would put a manufacturing concern into a version history meant to answer "does this app work with this dongle."
+
+| Message | Args | Meaning |
+|---|---|---|
+| `FACAL` | `<remote>` | Run DRV2605L auto-calibration on this remote. |
+| `FACOTP` | `<remote>` | Burn the last calibration into DRV2605L OTP memory, permanently. |
+| `FACSTATUS` | `<remote> <state> <detail> <diag> <vdd_mv> <comp> <bemf> <fb>` | Dongle → App. Result of whichever of the above ran. |
+
+`<remote>` is `RED` or `GREEN` — never `BOTH`; a calibration session addresses one physical DRV2605L. `<state>` is one of `CAL_DONE`, `CAL_FAILED`, `OTP_DONE`, `OTP_FAILED`. `<detail>` is `0` except after `OTP_FAILED`, where it carries `enum drv2605_otp_result` (`remote/src/drv2605.h`) as a plain number — this document does not decode it; the bench tool's own source is the reference. `<diag>` is `0`/`1` for the DRV2605L's own `DIAG_RESULT` bit. `<vdd_mv>` is the live supply reading at the moment of the operation. `<comp>`/`<bemf>`/`<fb>` are the three per-unit calibration bytes (`A_CAL_COMP`, `A_CAL_BEMF`, the calibrated `FEEDBACK_CONTROL` byte) — meaningful on `CAL_DONE`, `0` otherwise.
+
+**The real enforcement point is not on this link.** This USB-serial port is reachable by anything with Web Serial permission to it — meaningfully more exposed than the radio link a `FACAL`/`FACOTP` ultimately reaches, since the officiating app is already designed to be opened this way from a browser tab. `FACAL`/`FACOTP` are relayed unconditionally by the dongle; what actually makes them inert against a unit that has already shipped is `remote/src/link.c` refusing to act unless `drv2605_otp_status()` — a read-only hardware bit on the DRV2605L itself, not firmware state — reports "not yet programmed". A wrong or malicious `FACAL` against a calibrated unit does nothing, on every unit, permanently, regardless of what reaches this port.
+
+`OTP_DONE` is irreversible on the physical unit it names. There is no negative-case ladder here the way `RADIO_PROTOCOL.md` §14 has one for the real protocol — this is bench tooling, verified by running it, not a shipped contract with conformance cases.

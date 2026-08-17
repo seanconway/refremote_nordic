@@ -46,16 +46,40 @@
  * unrecognised TYPE to be ignored silently, which is why decode reports it as
  * its own status rather than folding it into a generic parse failure. */
 enum rframe_type {
-	RFRAME_UP_INPUT     = 0x01,
-	RFRAME_UP_READY     = 0x02,
-	RFRAME_UP_TELEMETRY = 0x03,
-	RFRAME_UP_DIAG      = 0x04,
+	RFRAME_UP_INPUT           = 0x01,
+	RFRAME_UP_READY           = 0x02,
+	RFRAME_UP_TELEMETRY       = 0x03,
+	RFRAME_UP_DIAG            = 0x04,
+	RFRAME_UP_FACTORY_STATUS  = 0x05, /* bench-only, RADIO_PROTOCOL.md's factory addendum */
 
-	RFRAME_DN_HAPTIC    = 0x81,
-	RFRAME_DN_INDICATOR = 0x82,
-	RFRAME_DN_CONFIG    = 0x83,
-	RFRAME_DN_HOST      = 0x84,
-	RFRAME_DN_SIMSOC    = 0x85,
+	RFRAME_DN_HAPTIC          = 0x81,
+	RFRAME_DN_INDICATOR       = 0x82,
+	RFRAME_DN_CONFIG          = 0x83,
+	RFRAME_DN_HOST            = 0x84,
+	RFRAME_DN_SIMSOC          = 0x85,
+	RFRAME_DN_CAL_TRIGGER     = 0x86, /* bench-only, see above */
+	RFRAME_DN_OTP_BURN        = 0x87, /* bench-only, see above */
+};
+
+/*
+ * RADIO_PROTOCOL.md's factory addendum, not the main frame table — these
+ * three exist so PROTOCOL.md's FACAL/FACOTP/FACSTATUS bench commands
+ * (dongle/src/protocol.c) have something to relay to and from the remote
+ * over the link that already exists (RR_UPLINK/RR_DOWNLINK), rather than a
+ * second BLE service. remote/src/link.c gates DN_CAL_TRIGGER and
+ * DN_OTP_BURN on drv2605_otp_status() reading "not yet programmed" before
+ * acting on either — an already-calibrated unit's physical DRV2605L makes
+ * both permanently inert regardless of what reaches it over the air.
+ *
+ * DN_CAL_TRIGGER and DN_OTP_BURN carry no payload beyond the header: there
+ * is exactly one DRV2605L per remote, so there is nothing to address.
+ * UP_FACTORY_STATUS reports the outcome of whichever ran.
+ */
+enum rframe_factory_state {
+	RFRAME_FACTORY_CAL_DONE   = 0, /* drv2605_calibrate() returned; diag_result says pass/fail */
+	RFRAME_FACTORY_CAL_FAILED = 1, /* drv2605_calibrate() itself errored (I2C, timeout) */
+	RFRAME_FACTORY_OTP_DONE   = 2,
+	RFRAME_FACTORY_OTP_FAILED = 3, /* detail carries enum drv2605_otp_result */
 };
 
 /* RP §7.2 byte 3. */
@@ -118,6 +142,22 @@ struct rframe_msg {
 			size_t len;          /* 0-18 */
 		} up_diag;
 
+		/* Bench-only, RADIO_PROTOCOL.md's factory addendum. `detail` is
+		 * 0 except for RFRAME_FACTORY_OTP_FAILED, where it carries
+		 * enum drv2605_otp_result (remote/src/drv2605.h) — this file
+		 * stays free of that header (no Zephyr-adjacent dependency
+		 * belongs here), so it is carried as a plain uint8_t and cast
+		 * at the call site instead. */
+		struct {
+			enum rframe_factory_state state;
+			uint8_t detail;
+			bool diag_pass;
+			uint16_t vdd_mv;
+			uint8_t a_cal_comp;
+			uint8_t a_cal_bemf;
+			uint8_t feedback_control;
+		} up_factory_status;
+
 		struct {
 			enum proto_waveform waveform;
 			uint8_t ttl_4ms;
@@ -165,6 +205,10 @@ int rframe_enc_up_telemetry(uint8_t *out, size_t cap, uint8_t ctr,
 			    uint8_t battery_pct, uint8_t flags, uint8_t dn_lost);
 int rframe_enc_up_diag(uint8_t *out, size_t cap, uint8_t ctr,
 		       const uint8_t *data, size_t len);
+int rframe_enc_up_factory_status(uint8_t *out, size_t cap, uint8_t ctr,
+				 enum rframe_factory_state state, uint8_t detail,
+				 bool diag_pass, uint16_t vdd_mv, uint8_t a_cal_comp,
+				 uint8_t a_cal_bemf, uint8_t feedback_control);
 
 int rframe_enc_dn_haptic(uint8_t *out, size_t cap, uint8_t ctr,
 			 enum proto_waveform w, uint8_t ttl_4ms);
@@ -175,6 +219,8 @@ int rframe_enc_dn_config(uint8_t *out, size_t cap, uint8_t ctr,
 			 uint8_t haptic_scale, uint8_t led_brightness);
 int rframe_enc_dn_host(uint8_t *out, size_t cap, uint8_t ctr, bool up);
 int rframe_enc_dn_simsoc(uint8_t *out, size_t cap, uint8_t ctr, uint8_t pct);
+int rframe_enc_dn_cal_trigger(uint8_t *out, size_t cap, uint8_t ctr);
+int rframe_enc_dn_otp_burn(uint8_t *out, size_t cap, uint8_t ctr);
 
 /* ------------------------------------------------------------------------ */
 /* CTR arithmetic — RP §4.2, §6.1 step 3                                     */

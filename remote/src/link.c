@@ -25,6 +25,7 @@
 #include "link.h"
 #include "haptic.h"
 #include "indicators.h"
+#include "drv2605.h"
 #include "rframe.h"
 
 #include <zephyr/kernel.h>
@@ -185,6 +186,63 @@ static void handle_ccc_changed(uint16_t value)
 	send_uplink(buf, n);
 }
 
+/*
+ * RADIO_PROTOCOL.md's factory addendum (not the main frame table) — see
+ * rframe.h's comment on RFRAME_DN_CAL_TRIGGER. Both handlers below run
+ * synchronously on link_workq, the same single cooperative queue
+ * buttons.c/haptic.c/indicators.c share, and both block it for the
+ * duration of a real DRV2605L operation (tens of ms for a calibrate, a
+ * bit more for an OTP burn's reset-and-verify) rather than turning this
+ * into a multi-step async state machine. That is a deliberate trade: the
+ * only caller is a bench technician running a one-time factory step, never
+ * a referee mid-match, so a brief stall of button/haptic responsiveness on
+ * this queue during a calibration session is an acceptable cost for
+ * keeping the implementation as simple as drv2605_cal_test.c's proven
+ * synchronous sequence.
+ */
+static void handle_factory_calibrate(void)
+{
+	struct drv2605_cal_result cal;
+	uint8_t buf[RFRAME_MAX_LEN];
+	uint8_t ctr = next_ctr++;
+	uint16_t vdd = 0;
+	int n;
+
+	if (drv2605_calibrate(&cal) != 0) {
+		n = rframe_enc_up_factory_status(buf, sizeof(buf), ctr,
+						 RFRAME_FACTORY_CAL_FAILED, 0,
+						 false, 0, 0, 0, 0);
+	} else {
+		(void)drv2605_read_vdd_mv(&vdd);
+		n = rframe_enc_up_factory_status(buf, sizeof(buf), ctr,
+						 RFRAME_FACTORY_CAL_DONE, 0, cal.passed,
+						 vdd, cal.a_cal_comp, cal.a_cal_bemf,
+						 cal.feedback_control);
+	}
+	send_uplink(buf, n);
+}
+
+static void handle_factory_otp_burn(void)
+{
+	uint8_t buf[RFRAME_MAX_LEN];
+	uint8_t ctr = next_ctr++;
+	uint16_t vdd = 0;
+	enum drv2605_otp_result r = drv2605_burn_otp();
+	int n;
+
+	(void)drv2605_read_vdd_mv(&vdd);
+	if (r == DRV2605_OTP_BURNED) {
+		n = rframe_enc_up_factory_status(buf, sizeof(buf), ctr,
+						 RFRAME_FACTORY_OTP_DONE, 0, true,
+						 vdd, 0, 0, 0);
+	} else {
+		n = rframe_enc_up_factory_status(buf, sizeof(buf), ctr,
+						 RFRAME_FACTORY_OTP_FAILED, (uint8_t)r,
+						 false, vdd, 0, 0, 0);
+	}
+	send_uplink(buf, n);
+}
+
 static void handle_downlink_write(const uint8_t *data, uint16_t length)
 {
 	struct rframe_msg msg;
@@ -218,6 +276,34 @@ static void handle_downlink_write(const uint8_t *data, uint16_t length)
 	case RFRAME_DN_SIMSOC:
 		indicators_set_battery_pct(msg.dn_simsoc.pct);
 		break;
+	case RFRAME_DN_CAL_TRIGGER:
+	case RFRAME_DN_OTP_BURN: {
+		/*
+		 * The actual gate, on both frame types: drv2605_otp_status()
+		 * is a hardware fact (Control4/0x1E, R-only), not firmware
+		 * state, so once a unit's physical DRV2605L reports OTP
+		 * already programmed, both frames become permanently inert
+		 * regardless of what reaches this board over the air —
+		 * exactly the property the design conversation settled on
+		 * (PLAN.md-adjacent: PROTOCOL.md's dongle-side FACAL/FACOTP
+		 * commands are reachable from any Web-Serial-permitted
+		 * browser tab, so this remote-side check is the real
+		 * enforcement point, not a courtesy). An I2C error reading
+		 * the status is treated the same as "already programmed" —
+		 * fail closed, per this codebase's usual rule for the wire.
+		 */
+		bool already;
+
+		if (drv2605_otp_status(&already) != 0 || already) {
+			break;
+		}
+		if (msg.type == RFRAME_DN_CAL_TRIGGER) {
+			handle_factory_calibrate();
+		} else {
+			handle_factory_otp_burn();
+		}
+		break;
+	}
 	default:
 		break;
 	}
