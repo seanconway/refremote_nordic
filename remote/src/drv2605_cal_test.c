@@ -25,9 +25,10 @@ void drv2605_cal_test_run(void)
 		return;
 	}
 	printk("[drv2605] I2C link OK.\n");
-	printk("[drv2605] NOTE: RATED_VOLTAGE/OD_CLAMP left at power-on default. "
-	       "Set them from datasheets/drv2605l.pdf S8.5/8.6 against the real "
-	       "motor and VIN before trusting this as a real calibration.\n");
+	printk("[drv2605] Calibrating against the Vybronics VZ7AL2B1690002's own "
+	       "rated/operating voltage (drv2605.c's RATED_VOLTAGE_TARGET/"
+	       "OD_CLAMP_TARGET) -- on the DK's 3.3V VIN, the 3.6V overdrive "
+	       "ceiling is supply-limited, not a bug.\n");
 
 	rc = drv2605_calibrate(&cal);
 	if (rc != 0) {

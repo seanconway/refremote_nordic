@@ -1,9 +1,12 @@
 /*
- * Waveform table, ttl check, PWM rendering — remote/BUILD_SPEC.md §7.3. On
- * this board a proxy: LED 1 / pwm_led0 stands in for the ERM, brightness for
- * amplitude. The waveform TABLE — which waveform is a distinct sensation,
- * and that BEAT is distinctly weaker than TAP — is what ports to real
- * hardware; the PWM back end does not (§13).
+ * Waveform table, ttl check, rendering — remote/BUILD_SPEC.md §7.3. Two
+ * back ends behind CONFIG_REMOTE_HAPTIC_PROXY_LED: the original PWM/LED1
+ * proxy (y, brightness stands in for amplitude on a board with no motor),
+ * and real DRV2605L library-effect playback (n, §13's intended product
+ * path). The waveform TABLE — which waveform is a distinct sensation, and
+ * that BEAT is distinctly weaker than TAP — is what both back ends
+ * implement identically in their own terms; only the rendering mechanism
+ * differs.
  */
 #ifndef REMOTE_HAPTIC_H_
 #define REMOTE_HAPTIC_H_

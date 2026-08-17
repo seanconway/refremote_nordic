@@ -30,6 +30,18 @@ config REMOTE_DRV2605_CAL_TEST
 	  what the product path uses until a driver IC decision is made
 	  (BUILD_SPEC.md §13).
 
+config REMOTE_HAPTIC_PROXY_LED
+	bool "Render haptics on pwm_led0 instead of the DRV2605L"
+	default y
+	help
+	  y: haptic.c's original stand-in -- brightness on LED1/pwm_led0
+	  proxies for amplitude, on a board with no motor at all
+	  (BUILD_SPEC.md S13). n: render real library effects on the
+	  DRV2605L via i2c1 (drv2605_play_sequence()) -- the actual product
+	  haptic path. Defaults y so an ordinary DK build needs no module
+	  wired up; set n once the DRV2605L breadboard bring-up
+	  (CONFIG_REMOTE_DRV2605_CAL_TEST) has already proven the I2C link.
+
 config REMOTE_SYNTHETIC_VDD_MV
 	int "drv2605_read_vdd_mv() placeholder, millivolts (no PMIC on the DK)"
 	default 3300

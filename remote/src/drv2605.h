@@ -1,15 +1,17 @@
 /*
  * DRV2605L driver -- the real (non-bench) module. Owns the calibration and
  * OTP-burn sequences the factory link protocol (RADIO_PROTOCOL.md's factory
- * addendum, dispatched from link.c) drives, and is the intended eventual
- * product haptic back end replacing haptic.c's PWM proxy (BUILD_SPEC.md
- * §13) once a driver IC decision is made -- that swap is not done here yet,
- * this module only owns calibration/OTP for now.
+ * addendum, dispatched from link.c) drives, and library-effect playback,
+ * haptic.c's DRV2605L back end (CONFIG_REMOTE_HAPTIC_PROXY_LED=n,
+ * BUILD_SPEC.md §13). Register I/O only -- no waveform-table policy (which
+ * effect means what, priority between waveforms) lives here; that is
+ * haptic.c's job, same division as it always was with the PWM proxy.
  */
 #ifndef REMOTE_DRV2605_H_
 #define REMOTE_DRV2605_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 struct drv2605_cal_result {
@@ -37,16 +39,28 @@ int drv2605_init(void);
 int drv2605_otp_status(bool *out_programmed);
 
 /*
- * Runs auto-calibration and reports the three bytes that vary per physical
- * unit. RATED_VOLTAGE (0x16) and OD_CLAMP (0x17) are deliberately left at
- * whatever they currently hold rather than computed here -- see the
- * CONFIG_REMOTE_DRV2605_RATED_VOLTAGE/OD_CLAMP placeholders in Kconfig and
- * their warning. A wrong constant there risks overdriving the motor; this
- * function calibrates against whatever is actually programmed, correct or
- * not, and out->passed only reflects DIAG_RESULT, not whether those two
- * inputs were ever set correctly.
+ * Writes RATED_VOLTAGE (0x16) and OD_CLAMP (0x17) from the Vybronics
+ * VZ7AL2B1690002 motor's own datasheet (drv2605.c's RATED_VOLTAGE_TARGET/
+ * OD_CLAMP_TARGET, with the derivation and its safety margin in a comment
+ * there), then runs auto-calibration and reports the three bytes that vary
+ * per physical unit. out->passed reflects DIAG_RESULT only -- calibration
+ * can pass against a wiring fault that happens to look electrically sane,
+ * so a felt/bench check still matters, not just this return value.
  */
 int drv2605_calibrate(struct drv2605_cal_result *out);
+
+/*
+ * Plays up to 7 library effect indices (TI's ROM waveform library,
+ * datasheets/drv2605l.pdf S12.1.2) in sequence via internal-trigger mode --
+ * the actual product haptic path, not the calibration/OTP one above.
+ * `count` == 1 is a single effect. Retriggering while something is already
+ * playing interrupts and restarts it, which is RADIO_PROTOCOL.md S8's "a
+ * frame arriving mid-render wins and restarts the motor" rule -- this
+ * function does not decide *whether* to interrupt (haptic.c's BEAT-vs-TAP
+ * priority check happens before this is called), only how to render once
+ * that decision is made.
+ */
+int drv2605_play_sequence(const uint8_t *effects, size_t count);
 
 /*
  * Burns the DRV2605L's one-time-programmable memory (registers 0x16-0x1A)

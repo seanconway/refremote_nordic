@@ -331,7 +331,7 @@ A remote's record carries the dongle in `peer_addr[0]` and a zero slot in `peer_
 
 | Symbol | Default | Meaning |
 |---|---|---|
-| `CONFIG_REMOTE_HAPTIC_PROXY_LED` | `y` | Render haptics on `pwm_led0`. Set `n` when a real motor driver exists |
+| `CONFIG_REMOTE_HAPTIC_PROXY_LED` | `y` | Render haptics on `pwm_led0`. Set `n` for real DRV2605L library-effect playback (`haptic.c`, `drv2605.c`) once the module is wired to `i2c1` — PLAN.md's entry on this change has the waveform-to-effect mapping and its known gap (`DN_CONFIG`'s `haptic_scale` isn't applied on this path yet) |
 | `CONFIG_REMOTE_SYNTHETIC_BATTERY` | `y` | No battery on this board. §8.3 |
 
 No console or shell is required on the DK, but neither is forbidden — unlike the dongle, the DK has an onboard debugger, so **RTT is free here and costs no bootloader.** Use it for the diagnostics the dongle cannot emit: the RGB values of a `DN_INDICATOR` that the LEDs cannot show, `CTR` state, and the gesture classifier's transitions.
@@ -379,5 +379,7 @@ Recorded so that this firmware is written as something to extend rather than rep
 | Four RGB indicators | `indicators.c`'s single-colour rendering | `DN_INDICATOR` parsing and idempotence |
 | ERM and driver IC | `haptic.c`'s PWM back end | The waveform **table**, the `ttl` rule, the priority classes |
 | nPM1300, real state of charge | The synthetic telemetry of §8.3 | `UP_TELEMETRY` framing |
+
+**The software half of this row already happened, on the DK's own breadboard DRV2605L+ERM, ahead of the PCB.** `CONFIG_REMOTE_HAPTIC_PROXY_LED=n` swaps `haptic.c` to real library-effect playback (`drv2605.c`) without touching the table/`ttl`/priority code this row promises stays untouched — PLAN.md's entry on this change is the record. What's still pending real hardware is the PCB's own DRV2605L placement and the nPM1300 row below it, not this software swap.
 
 Keep the board-dependent parts behind devicetree aliases and a thin back end per subsystem. Nothing in `link.c`, `rframe.c` or `provisioning.c` should need to know which board it is on.

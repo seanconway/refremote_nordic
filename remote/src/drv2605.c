@@ -23,6 +23,7 @@
 #define REG_STATUS          0x00
 #define REG_MODE             0x01
 #define REG_GO                0x0C
+#define REG_WAV_FRM_SEQ1   0x04  /* base of the 8-slot sequence, 0x04-0x0B */
 #define REG_RATED_VOLTAGE  0x16
 #define REG_OD_CLAMP        0x17
 #define REG_A_CAL_COMP     0x18
@@ -38,6 +39,46 @@
 
 #define CONTROL4_OTP_STATUS  BIT(2)
 #define CONTROL4_OTP_PROGRAM BIT(0)
+
+#define WAV_FRM_SEQ_MAX 8u  /* register block is 0x04-0x0B, one byte each */
+
+/*
+ * Targets for the Vybronics VZ7AL2B1690002 ERM (datasheets/Vybronics-
+ * VZ7AL2B1690002-datasheet.pdf): rated voltage 3.0V, operating voltage
+ * 2.2-3.6V. Register values from datasheets/drv2605l.pdf S8.5.2:
+ *
+ *   RATED_VOLTAGE[7:0] = V_rated / 0.02118          (Eq. 4, closed-loop ERM)
+ *                       = 3.0 / 0.02118 = 141.6 -> 142 (0x8E)
+ *
+ *   OD_CLAMP[7:0] targets the motor's own 3.6V operating-voltage ceiling --
+ *   safe to drive continuously per its datasheet, so a brief overdrive
+ *   kick to that level is well inside spec. The exact closed-loop formula
+ *   (Eq. 8) scales by a factor of t(DRIVE_TIME)-related timing constants
+ *   that need actuator-specific tuning no motor datasheet provides; using
+ *   the simpler open-loop-style relationship instead (Eq. 6) is a
+ *   deliberate, provably-conservative substitute, not a shortcut taken
+ *   for convenience -- Eq. 8's timing ratio is always <= 1 (its numerator
+ *   subtracts 300us that its denominator doesn't), so for any legal
+ *   DRIVE_TIME/IDISS_TIME/BLANKING_TIME the real closed-loop clamp voltage
+ *   at this register value is at or below the 3.6V computed here, never
+ *   above it:
+ *
+ *   OD_CLAMP[7:0] = V_od / 0.02159                  (Eq. 6, open-loop ERM,
+ *                                                     used here as a safe
+ *                                                     upper-bound estimate)
+ *                 = 3.6 / 0.02159 = 166.7 -> 167 (0xA7)
+ *
+ * Both equations are independent of VIN -- they relate a register code to
+ * an output voltage directly. VIN only sets a ceiling on what's reachable
+ * ("the output driver is unable to reach the clamp voltage value" if VDD
+ * is lower, per the datasheet's own note): on the DK bench build (VIN tied
+ * to the 3.3V rail per the VIN/pull-up wiring discussion), RATED_VOLTAGE's
+ * 3.0V target is reachable but OD_CLAMP's 3.6V is not -- overdrive will be
+ * capped at whatever VIN actually is, not a bug, just this bench's
+ * supply. The full 3.6V ceiling is only reachable once VIN is the LiPo.
+ */
+#define RATED_VOLTAGE_TARGET 142u
+#define OD_CLAMP_TARGET      167u
 
 /* Auto-cal and the post-OTP device reset both take on the order of tens of
  * ms; these are generous ceilings, not measured figures. */
@@ -111,6 +152,19 @@ int drv2605_calibrate(struct drv2605_cal_result *out)
 	int rc;
 
 	*out = (struct drv2605_cal_result){ 0 };
+
+	/* Datasheet S8.5.2: "these registers must be written before
+	 * calibration is performed." Written every call rather than once at
+	 * init so a recalibration always starts from the same known target,
+	 * not whatever the chip happened to still hold. */
+	rc = drv_write(REG_RATED_VOLTAGE, RATED_VOLTAGE_TARGET);
+	if (rc != 0) {
+		return rc;
+	}
+	rc = drv_write(REG_OD_CLAMP, OD_CLAMP_TARGET);
+	if (rc != 0) {
+		return rc;
+	}
 
 	rc = drv_write(REG_MODE, MODE_AUTO_CAL);
 	if (rc != 0) {
@@ -205,6 +259,39 @@ enum drv2605_otp_result drv2605_burn_otp(void)
 		return DRV2605_OTP_VERIFY_FAILED;
 	}
 	return DRV2605_OTP_BURNED;
+}
+
+int drv2605_play_sequence(const uint8_t *effects, size_t count)
+{
+	uint8_t seq[WAV_FRM_SEQ_MAX] = { 0 };
+
+	if (count > WAV_FRM_SEQ_MAX - 1u) {
+		/* One slot short of the block: a trailing 0 terminates the
+		 * sequence (datasheet S8.5.4) and must survive even when the
+		 * caller fills every effect slot it can. */
+		return -EINVAL;
+	}
+	memcpy(seq, effects, count);
+	/* seq[count] is already 0 from the initializer -- the terminator. */
+
+	/*
+	 * No explicit stop before writing: internal-trigger mode plus GO is
+	 * exactly RADIO_PROTOCOL.md S8's "a frame arriving mid-render wins
+	 * and restarts the motor" rule already implemented in Zephyr/the
+	 * DRV2605L itself -- retriggering GO while a waveform is still
+	 * playing interrupts it and starts the new one. haptic.c is what
+	 * decides *whether* to call this (its BEAT-vs-TAP priority check
+	 * happens before this function is reached, not inside it).
+	 */
+	for (size_t i = 0; i < WAV_FRM_SEQ_MAX; i++) {
+		int rc = drv_write((uint8_t)(REG_WAV_FRM_SEQ1 + i), seq[i]);
+
+		if (rc != 0) {
+			return rc;
+		}
+	}
+
+	return drv_write(REG_GO, 0x01);
 }
 
 int drv2605_read_vdd_mv(uint16_t *out_mv)
