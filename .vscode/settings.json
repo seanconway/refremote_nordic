@@ -3,6 +3,7 @@
         "${workspaceFolder}\\dongle",
         "${workspaceFolder}\\cdc_acm",
         "${workspaceFolder}\\remote",
-        "${workspaceFolder}\\remote_dummy"
+        "${workspaceFolder}\\remote_dummy",
+        "${workspaceFolder}\\remote_haptic_eval"
     ]
 }

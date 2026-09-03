@@ -135,15 +135,15 @@ int haptic_init(struct k_work_q *workq)
  * TS2200 library). A starting point to bench-verify by feel, not a final
  * assignment — see PLAN.md's entry on this change for the full reasoning.
  * BEAT is deliberately the *same click family as TAP, at a fixed weaker
- * strength* (effect 3 vs effect 1, "Strong Click" at 30% vs 100%) rather
+ * strength* (effect 6 vs effect 5, "Sharp Click" at 30% vs 60%) rather
  * than an unrelated effect: BUILD_SPEC.md §7.3 requires BEAT to be
  * "distinctly weaker... not different in principle, different in
  * sensation", which picking two strength variants of one effect satisfies
  * by construction, the same way the PWM proxy's shared base_duty_pct did.
  */
 static const uint8_t effect_single[PROTO_WF_COUNT] = {
-	[PROTO_WF_TAP]    = 1,  /* Strong Click - 100% */
-	[PROTO_WF_BEAT]   = 3,  /* Strong Click - 30% */
+	[PROTO_WF_TAP]    = 5,  /* Sharp Click - 60% */
+	[PROTO_WF_BEAT]   = 6,  /* Sharp Click - 30% */
 	[PROTO_WF_WARN]   = 7,  /* Soft Bump - 100% -- different character than Click, unmistakable */
 	[PROTO_WF_BUZZ]   = 47, /* Buzz 1 - 100% */
 	[PROTO_WF_LONG]   = 14, /* Strong Buzz - 100% */

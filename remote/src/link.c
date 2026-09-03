@@ -30,6 +30,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
@@ -83,6 +84,36 @@ static bt_addr_le_t dongle_addr;
 static struct k_work_q *link_workq;
 static struct k_work_delayable telemetry_work;
 static struct k_work_delayable adv_retry_work;
+
+/*
+ * Bench diagnostic, not a spec feature -- for isolating the "sluggish ack"
+ * report into transmission-side vs motor-side latency. DT_ALIAS(led0) is
+ * physical LED 1 / P0.13 (same lamp haptic.c's PWM-proxy comment names),
+ * free here because the RGB indicator overlay claims P0.14-31/P1.01-05 and
+ * pwm_led0 -- the other driver that also targets P0.13 -- only compiles in
+ * under CONFIG_REMOTE_HAPTIC_PROXY_LED, which is off for this real-DRV2605L
+ * build (haptic.c's file-header comment on that same pin collision applies
+ * if that ever changes). Pulsed the instant a DN_HAPTIC frame is dispatched,
+ * before the DRV2605L I2C write, so its edge marks radio-receipt time and
+ * can be compared by eye or scope against when the motor actually starts.
+ */
+static const struct gpio_dt_spec rx_debug_led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static struct k_work_delayable rx_debug_led_off_work;
+
+#define RX_DEBUG_LED_PULSE_MS 50u
+
+static void rx_debug_led_off_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	(void)gpio_pin_set_dt(&rx_debug_led, 0);
+}
+
+static void rx_debug_led_pulse(void)
+{
+	(void)gpio_pin_set_dt(&rx_debug_led, 1);
+	k_work_reschedule_for_queue(link_workq, &rx_debug_led_off_work,
+				    K_MSEC(RX_DEBUG_LED_PULSE_MS));
+}
 
 /* ------------------------------------------------------------------------ */
 /* BT-thread -> link_workq event marshaling                                  */
@@ -260,6 +291,7 @@ static void handle_downlink_write(const uint8_t *data, uint16_t length)
 
 	switch (msg.type) {
 	case RFRAME_DN_HAPTIC:
+		rx_debug_led_pulse();
 		haptic_render(msg.dn_haptic.waveform, msg.dn_haptic.ttl_4ms);
 		break;
 	case RFRAME_DN_INDICATOR:
@@ -645,6 +677,11 @@ int link_init(const struct provisioning_record *prov, struct k_work_q *workq)
 
 	k_work_init_delayable(&telemetry_work, telemetry_handler);
 	k_work_init_delayable(&adv_retry_work, adv_retry_handler);
+
+	if (gpio_is_ready_dt(&rx_debug_led)) {
+		(void)gpio_pin_configure_dt(&rx_debug_led, GPIO_OUTPUT_INACTIVE);
+	}
+	k_work_init_delayable(&rx_debug_led_off_work, rx_debug_led_off_handler);
 
 	start_advertising();
 	return 0;

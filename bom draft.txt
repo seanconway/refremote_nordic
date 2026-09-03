@@ -1,0 +1,23 @@
+1x MCU/Wireless module (nRF52840) (MDBT50Q-P1MV2)
+1x nPM1300 (NPM1300-QEAA-R)
+1x usbc charging receptacle (UJC-H-G-SMT-2-P6-TR)
+3x ESD protection (ESD9B5.0ST5G)
+1x Haptic Driver (DRV2605LDGSR)
+1x LRA haptic motor (VG1040003D)
+1x bicolor LED (155124RV73200)
+7x Tactile Push buttons (TS14-1212-43-BK-260-SCR-D)
+4x RGB LED (CLMVC-FKA-CLBDGL7LBB79353)
+
+
+1x power switch
+1x logic transistor
+1x 3.7V LiPo battery
+
+Decoupling Caps
+Resistors
+
+Selection criteria:
+product functionality
+component lifecycle
+Unit cost
+

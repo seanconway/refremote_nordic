@@ -1,8 +1,8 @@
 # Wireless Single-Operator Officiating System
 # Project Scope
 
-**Version 1.1**
-**Companion document:** *Functional Specification v2.1*
+**Version 1.3**
+**Companion document:** *Functional Specification v2.3*
 
 ---
 
@@ -257,8 +257,7 @@ Everything specified in the *Functional Specification* without a "planned" marke
 |---|---|
 | **Customisable button mapping** | Default assignments are reasonable intuitions; remapping is a refinement once field preference data exists. |
 | **Extended link-state signalling** | Hardware supports RGB throughout specifically to leave this open. Intermediate connectivity states and link-quality indication are valuable but not blocking. |
-| **Power-saving mode** | Needed only if measured battery life falls short of the ten-hour target. |
-| **Dual-haptic hardware revision** | Contingent on the single-ERM assumption failing in prototyping. |
+| **Power-saving mode** | Needed only if measured battery life falls short of the ten-hour target, beyond what the operator-controlled heartbeat toggle already gives (*Functional Specification* §8.7, §11.2). |
 | **Swappable battery pack** | Contingent on battery optimisation proving insufficient. |
 | **Desktop-packaged build** | Removes dependence on browser serial-access policy and simplifies venue setup. The serial transport should be built behind a thin abstraction from the outset so this path stays inexpensive. |
 | **Counter count encoding on wrist indicators** | Only if field use shows referees want counts on the wrist rather than the scoreboard. |
@@ -276,8 +275,10 @@ Assumptions the project rests on that cannot be settled from specification alone
 
 | Risk | If it fails |
 |---|---|
-| **Single ERM cannot serve both expiry amplitude and a low-amplitude countable heartbeat** | Dual-haptic hardware revision required; affects enclosure and cost. |
-| **Amplitude separation between heartbeat and acknowledgement is not perceptually reliable** | Repeated-press scoring loses its verification mechanism; the core input model is undermined. |
+| **A single LRA cannot deliver the clock-expiry / time-expiration notification strongly enough to replace the towel tapper in the full wrist assembly** | The first prototype's one-motor haptic design fails its core purpose (§1.2). The design reverts to a dedicated ERM for the notification class alongside the LRA, or to a single ERM — a second PCB iteration (*Functional Specification* §3.3, §15.3). |
+| **A single LRA carrying acknowledgement, heartbeat and overdrive notifications does not hold the ten-hour battery target** | Same outcome — the two-motor split is reinstated, moving the rare high-amplitude events onto an ERM whose per-event draw is then incurred rarely (*Functional Specification* §11.2). |
+| **Amplitude separation between heartbeat and acknowledgement, both on the LRA, is not perceptually reliable** | Repeated-press scoring loses its verification mechanism; the core input model is undermined. Unaffected by the one-motor / two-motor choice — both events stay on the LRA either way. |
+| **ERM and LRA, co-located in one small enclosure, interfere mechanically** *(only if the two-motor fallback is taken)* | One motor's vibration masks or dulls the other's onset; motor placement or damping is revisited, affecting enclosure design. Does not arise for the single-motor first prototype. |
 | **Ten-hour battery life not achievable** | Power-saving mode or swappable battery required; the latter affects enclosure, sealing and cost. |
 | **Latency budget not holdable at 40 ft with body shadowing under 30-system density** | Acknowledgement fidelity degrades, which the input model depends on. May require higher transmit power or dongle placement constraints. |
 | **Event ordering by receipt proves unreliable under rapid exchange** | Requires remote-side sequencing, adding protocol complexity. |

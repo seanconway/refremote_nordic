@@ -1,0 +1,18 @@
+menu "Haptic eval options"
+
+config REMOTE_SYNTHETIC_VDD_MV
+	int "drv2605_read_vdd_mv() placeholder, millivolts (no PMIC on the DK)"
+	default 3300
+	help
+	  Mirrors remote/Kconfig's option of the same name. drv2605.c is
+	  shared source with remote/ (CMakeLists.txt references
+	  ../remote/src/drv2605.c directly, not a copy) and drv2605_read_vdd_mv()
+	  needs this symbol to compile even though this app never calls
+	  drv2605_burn_otp() -- no OTP command is exposed here, by design, so
+	  the read-back value only matters if drv2605_burn_otp() is ever
+	  called by mistake, in which case the same below-4.0V default makes
+	  it refuse, same as on the DK remote build.
+
+endmenu
+
+source "Kconfig.zephyr"

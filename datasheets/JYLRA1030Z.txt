@@ -1,0 +1,19 @@
+Circular Linear Resonant Actuator Model JYLRA1030Z
+
+AC Motor Vibration, LRA 1.8Vrms AC
+
+
+
+Longitudinal linear motor, vibrates up and down along the Z axis
+Product Dimensions:  Φ10×3.0  mm
+Rated Voltage (AC RMS):1.8
+Operating Voltage (AC RMS):0.1 ~ 1.85
+Rated Current MAX (mA):100
+Rising Time:  50ms max 
+Falling Time:  80ms  max
+Operating Temp:  -10℃ ~ +60℃ 
+Resonant Frequency (Hz):210
+Steady Acceleration(@100g, Grms): 1.3 MIN
+Vibration Direction: Z-AXIS
+LRAs require an alternating driving signal that can move the actuator up and down.
+Application field: mobile phone, tablet computer, smart POS, etc..
